@@ -5,6 +5,7 @@ import { budgetsRoute } from './routes/budgets';
 import { chatRoute } from './routes/chat';
 import { debtsRoute } from './routes/debts';
 import { exportRoute } from './routes/export';
+import { scanReceiptRoute } from './routes/scanReceipt';
 import { transactionsRoute } from './routes/transactions';
 
 export type Bindings = {
@@ -24,6 +25,7 @@ const apiRoutes = app
   })
   .route('/api/transactions', transactionsRoute)
   .route('/api/chat', chatRoute)
+  .route('/api/scan-receipt', scanReceiptRoute)
   .route('/api/analytics', analyticsRoute)
   .route('/api/debts', debtsRoute)
   .route('/api/budgets', budgetsRoute)

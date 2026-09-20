@@ -6,10 +6,10 @@
 
 ## 2. Scan Struk Belanjaan (Multimodal OCR)
 
-- [ ] 2.1 Buat endpoint Hono `/api/scan-receipt` yang menerima gambar Base64 dan memprosesnya via Gemini 2.0 Flash Multimodal Vision
-- [ ] 2.2 Bangun komponen modal `ReceiptScannerModal.tsx` dengan akses kamera HP langsung (`capture="environment"`) atau pemilihan file galeri
-- [ ] 2.3 Buat antarmuka konfirmasi data hasil pembacaan struk (merchant, nominal, kategori, rincian) sebelum disimpan ke Cloudflare D1
-- [ ] 2.4 Verifikasi alur upload foto struk kasir: data terekstraksi akurat dan transaksi berhasil masuk ke database
+- [x] 2.1 Buat endpoint Hono `/api/scan-receipt` yang menerima gambar Base64 dan memprosesnya via Gemini 2.0 Flash Multimodal Vision
+- [x] 2.2 Bangun komponen modal `ReceiptScannerModal.tsx` dengan akses kamera HP langsung (`capture="environment"`) atau pemilihan file galeri
+- [x] 2.3 Buat antarmuka konfirmasi data hasil pembacaan struk (merchant, nominal, kategori, rincian) sebelum disimpan ke Cloudflare D1
+- [x] 2.4 Verifikasi alur upload foto struk kasir: data terekstraksi akurat dan transaksi berhasil masuk ke database
 
 ## 3. Sistem Budgeting & Health Bar per Kategori
 

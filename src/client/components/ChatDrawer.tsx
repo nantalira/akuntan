@@ -1,7 +1,19 @@
-import { Bot, CheckCircle2, Mic, MicOff, Send, Sparkles, User, X } from 'lucide-react';
+import {
+  AlertCircle,
+  Bot,
+  Camera,
+  CheckCircle2,
+  Mic,
+  MicOff,
+  Send,
+  Sparkles,
+  User,
+  X
+} from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
+import { ReceiptScannerModal } from './ReceiptScannerModal';
 
 interface Message {
   id: string;
@@ -25,9 +37,16 @@ const QUICK_SUGGESTIONS = [
 
 export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { isListening, isSupported, toggleListening } = useSpeechRecognition({
+  const {
+    isListening,
+    isSupported,
+    toggleListening,
+    error: speechError,
+    setError: setSpeechError
+  } = useSpeechRecognition({
     onTranscriptChange: (text) => {
       setInput(text);
     }
@@ -41,6 +60,26 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
   ]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-adjust height dynamically: 1 line (~42px) when short, up to 3-4 lines (~115px) when long
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    // Recalculate height and manage scrollbar display dynamically
+    if (input !== undefined) {
+      textarea.style.height = 'auto';
+      const scrollHeight = textarea.scrollHeight;
+      if (scrollHeight > 115) {
+        textarea.style.height = '115px';
+        textarea.style.overflowY = 'auto';
+      } else {
+        textarea.style.height = `${Math.max(scrollHeight, 42)}px`;
+        textarea.style.overflowY = 'hidden';
+      }
+    }
+  }, [input]);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -211,46 +250,83 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
               ))}
             </div>
 
+            {/* Speech Error Banner */}
+            {speechError && (
+              <div className="mx-3 mt-2 px-3 py-2 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center justify-between animate-fade-in shadow-sm">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <AlertCircle className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                  {speechError}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSpeechError(null)}
+                  className="text-rose-400 hover:text-rose-600 p-0.5 rounded-lg hover:bg-rose-100 transition-colors"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
             {/* Input Bar */}
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 handleSend();
               }}
-              className="p-3 bg-white border-t border-slate-100 flex items-center gap-2"
+              className="p-3 bg-white border-t border-slate-100 flex items-end gap-1.5 sm:gap-2 w-full"
             >
-              <input
-                type="text"
+              <textarea
+                ref={textareaRef}
+                rows={1}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder={isListening ? 'Mendengarkan suara...' : "Ketik: 'Makan ayam 18k'..."}
-                className={`flex-1 bg-slate-50 border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:bg-white transition-all ${
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                placeholder={isListening ? 'Mendengarkan...' : "Ketik: 'Makan ayam 18k'..."}
+                className={`flex-1 min-w-0 bg-slate-50 border rounded-2xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:bg-white resize-none transition-[border-color,box-shadow] leading-relaxed custom-scrollbar ${
                   isListening
-                    ? 'border-rose-400 focus:ring-rose-200 ring-2 ring-rose-100'
+                    ? 'border-rose-400 focus:ring-rose-200 ring-1 ring-rose-200'
                     : 'border-slate-200 focus:ring-emerald-300'
                 }`}
+                style={{ maxHeight: '115px' }}
                 disabled={isLoading}
               />
 
               {isSupported && (
-                <button
-                  type="button"
-                  onClick={toggleListening}
-                  title={isListening ? 'Berhenti mendengarkan' : 'Bicara (Input Suara)'}
-                  className={`p-2.5 rounded-xl transition-all ${
-                    isListening
-                      ? 'bg-rose-500 text-white animate-pulse shadow-md shadow-rose-200'
-                      : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                  }`}
-                >
-                  {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                </button>
+                <div className="relative flex items-center justify-center shrink-0">
+                  <button
+                    type="button"
+                    onClick={toggleListening}
+                    title={isListening ? 'Berhenti mendengarkan' : 'Bicara (Input Suara)'}
+                    className={`relative w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-all ${
+                      isListening
+                        ? 'bg-rose-500 text-white ring-2 ring-rose-300 animate-pulse shadow-sm shadow-rose-200'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                    }`}
+                  >
+                    {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                  </button>
+                </div>
               )}
+
+              <button
+                type="button"
+                onClick={() => setIsReceiptModalOpen(true)}
+                title="Scan Struk Kasir (Foto/Galeri)"
+                className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-600 flex items-center justify-center shrink-0 transition-all"
+              >
+                <Camera className="w-4 h-4" />
+              </button>
 
               <button
                 type="submit"
                 disabled={!input.trim() || isLoading}
-                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white p-2.5 rounded-xl transition-all shadow-md shadow-emerald-200"
+                title="Kirim Catatan"
+                className="w-10 h-10 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl flex items-center justify-center shrink-0 transition-all shadow-md shadow-emerald-200"
               >
                 <Send className="w-4 h-4" />
               </button>
@@ -258,6 +334,24 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
           </div>
         </div>
       )}
+
+      {/* Modal OCR Struk Belanjaan */}
+      <ReceiptScannerModal
+        isOpen={isReceiptModalOpen}
+        onClose={() => setIsReceiptModalOpen(false)}
+        onSuccess={() => {
+          onTransactionAdded();
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: Date.now().toString(),
+              sender: 'bot',
+              text: '✅ Transaksi dari struk belanja kasir berhasil dicatat ke database!',
+              isSuccess: true
+            }
+          ]);
+        }}
+      />
     </>
   );
 };
