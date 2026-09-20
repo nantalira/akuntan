@@ -12,8 +12,11 @@
     {
       "binding": "DB",
       "database_name": "akuntan-db",
-      "database_id": "local-akuntan-db",
+      "database_id": "e0e06f17-add2-47dd-975d-8646764f87b0",
       "migrations_dir": "drizzle"
     }
-  ]
+  ],
+  "vars": {
+    "GEMINI_MODEL": "gemini-3.8-flash"
+  }
 }
