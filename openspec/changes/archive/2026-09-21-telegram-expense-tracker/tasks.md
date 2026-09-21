@@ -23,5 +23,5 @@
 ## 4. Data Migration & Deployment
 
 - [x] 4.1 Buat skrip seeder migrasi (`scripts/migrate-sheets.ts`) dan jalankan via Bun (`bun scripts/migrate-sheets.ts`) untuk mengimpor seluruh data transaksi 23 tab Google Sheets ke Cloudflare D1
-- [ ] 4.2 Jalankan deployment proyek ke Cloudflare Pages/Workers (`bun run build && bun x wrangler deploy`) dan konfigurasi secret `GEMINI_API_KEY`
-- [ ] 4.3 Uji coba fungsionalitas end-to-end: input via chat drawer, verifikasi update dashboard seketika, dan instalasi PWA di perangkat HP
+- [x] 4.2 Jalankan deployment proyek ke Cloudflare Pages/Workers (`bun run build && bun x wrangler deploy`) dan konfigurasi secret `GEMINI_API_KEY`
+- [x] 4.3 Uji coba fungsionalitas end-to-end: input via chat drawer, verifikasi update dashboard seketika, dan instalasi PWA di perangkat HP

@@ -21,6 +21,11 @@ export default function App() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
 
+  // Date filter state (default to today's date: YYYY-MM-DD)
+  const [selectedDate, setSelectedDate] = useState<string>(() =>
+    new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Jakarta' }).format(new Date())
+  );
+
   // Data states
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   const [debts, setDebts] = useState<DebtContact[]>([]);
@@ -41,6 +46,7 @@ export default function App() {
         api.api.transactions.$get({
           query: {
             month: selectedMonth,
+            date: selectedDate !== 'all' ? selectedDate : undefined,
             category: selectedCategory !== 'Semua' ? selectedCategory : undefined,
             search: searchQuery.trim() || undefined
           }
@@ -76,7 +82,7 @@ export default function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedMonth, selectedCategory, searchQuery]);
+  }, [selectedMonth, selectedDate, selectedCategory, searchQuery]);
 
   const handleSaveBudgets = async (
     newBudgets: Array<{ category: string; monthlyLimit: number }>
@@ -206,6 +212,10 @@ export default function App() {
         {activeTab === 'transactions' && (
           <TransactionList
             transactions={transactions}
+            selectedMonth={selectedMonth}
+            onMonthChange={setSelectedMonth}
+            selectedDate={selectedDate}
+            onDateChange={setSelectedDate}
             selectedCategory={selectedCategory}
             onCategoryChange={setSelectedCategory}
             searchQuery={searchQuery}

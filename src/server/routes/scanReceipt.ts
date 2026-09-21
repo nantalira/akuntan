@@ -1,5 +1,7 @@
 import { Hono } from 'hono';
+import { getDb } from '../../db/client';
 import type { Bindings } from '../index';
+import { getAiQuotaStatus, incrementAiUsage } from '../utils/aiUsage';
 
 export type ReceiptExtractedData = {
   merchant: string;
@@ -14,10 +16,22 @@ export type ReceiptExtractedData = {
 
 export const scanReceiptRoute = new Hono<{ Bindings: Bindings }>().post('/', async (c) => {
   const apiKey = c.env.GEMINI_API_KEY;
-  const modelName = c.env.GEMINI_MODEL || 'gemini-2.0-flash';
+  const modelName = c.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 
   if (!apiKey) {
     return c.json({ success: false, error: 'GEMINI_API_KEY belum dikonfigurasi' }, 500);
+  }
+
+  const db = getDb(c.env.DB);
+  const quota = await getAiQuotaStatus(db, modelName, c.env.AI_DAILY_LIMIT);
+  if (quota.remaining <= 0) {
+    return c.json(
+      {
+        success: false,
+        error: 'Kuota harian AI telah habis. Silakan catat transaksi secara manual.'
+      },
+      429
+    );
   }
 
   const { imageBase64, mimeType = 'image/jpeg' } = await c.req.json<{
@@ -99,6 +113,11 @@ Kembalikan respon DALAM FORMAT JSON PERSIS SEPERTI INI:
       }
     );
 
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`Google Gemini HTTP ${res.status}: ${errBody}`);
+    }
+
     type GeminiVisionResponse = {
       candidates?: Array<{
         content?: {
@@ -123,6 +142,11 @@ Kembalikan respon DALAM FORMAT JSON PERSIS SEPERTI INI:
     }
 
     const parsed = JSON.parse(textContent) as ReceiptExtractedData;
+    try {
+      await incrementAiUsage(db, modelName);
+    } catch (dbErr) {
+      console.error('Failed to increment AI usage counter in scanReceipt:', dbErr);
+    }
 
     // Normalize category
     const validCategories = ['Makan', 'Jajan', 'Primer', 'Motor', 'Olga', 'Belanja'] as const;

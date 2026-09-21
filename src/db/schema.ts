@@ -18,6 +18,7 @@ export const transactions = sqliteTable(
     creditor: text('creditor'), // Kontak yang menalangi pengguna (Menghutangi)
     debtAmount: integer('debt_amount').default(0),
     notes: text('notes'),
+    source: text('source').default('manual').notNull(), // 'ai' | 'local_parser' | 'manual'
     createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull()
   },
   (table) => ({
@@ -40,7 +41,17 @@ export const budgets = sqliteTable('budgets', {
   monthlyLimit: integer('monthly_limit').notNull().default(0)
 });
 
+export const aiUsage = sqliteTable('ai_usage', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  date: text('date').notNull().unique(), // YYYY-MM-DD
+  requestCount: integer('request_count').notNull().default(0),
+  modelUsed: text('model_used').notNull(),
+  updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`).notNull()
+});
+
 export type Transaction = typeof transactions.$inferSelect;
 export type NewTransaction = typeof transactions.$inferInsert;
 export type Debt = typeof debts.$inferSelect;
 export type Budget = typeof budgets.$inferSelect;
+export type AiUsage = typeof aiUsage.$inferSelect;
+export type NewAiUsage = typeof aiUsage.$inferInsert;

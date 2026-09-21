@@ -2,6 +2,7 @@ import { eq, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { getDb, schema } from '../../db/client';
 import type { Bindings } from '../index';
+import { getAiQuotaStatus, incrementAiUsage } from '../utils/aiUsage';
 
 interface GeminiParsedResponse {
   action: 'expense' | 'settlement' | 'split_bill' | 'general';
@@ -35,12 +36,21 @@ export const chatRoute = new Hono<{ Bindings: Bindings }>().post('/', async (c) 
   const currentTimeStr = wibDate.toTimeString().split(' ')[0]; // HH:mm:ss
 
   const apiKey = c.env.GEMINI_API_KEY;
-  const modelName = c.env.GEMINI_MODEL || 'gemini-2.0-flash';
   let parsed: GeminiParsedResponse;
+  let inputSource: 'ai' | 'local_parser' = 'local_parser';
 
   if (apiKey) {
-    try {
-      const systemInstruction = `Kamu adalah Akuntan AI, asisten pencatatan pengeluaran pribadi berbahasa Indonesia yang cerdas dan teliti.
+    const modelName = c.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+    const quota = await getAiQuotaStatus(db, modelName, c.env.AI_DAILY_LIMIT);
+
+    if (quota.remaining <= 0) {
+      console.warn(
+        `AI Quota reached limit (${quota.used}/${quota.limit}), falling back to local parser`
+      );
+      parsed = fallbackLocalParser(message, todayStr, currentTimeStr);
+    } else {
+      try {
+        const systemInstruction = `Kamu adalah Akuntan AI, asisten pencatatan pengeluaran pribadi berbahasa Indonesia yang cerdas dan teliti.
 Hari ini adalah: ${todayStr}, jam saat ini: ${currentTimeStr} (WIB).
 
 Tugasmu adalah menganalisis pesan santai pengguna tentang pengeluaran, hutang, patungan, atau pelunasan, lalu mengembalikan JSON terstruktur.
@@ -78,41 +88,55 @@ Kembalikan format JSON:
   "reply": "kalimat konfirmasi ramah dalam bahasa Indonesia merangkum apa yang dicatat"
 }`;
 
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: message }] }],
-            systemInstruction: { parts: [{ text: systemInstruction }] },
-            generationConfig: {
-              responseMimeType: 'application/json',
-              temperature: 0.1
-            }
-          })
-        }
-      );
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: message }] }],
+              systemInstruction: { parts: [{ text: systemInstruction }] },
+              generationConfig: {
+                responseMimeType: 'application/json',
+                temperature: 0.1
+              }
+            })
+          }
+        );
 
-      type GeminiResponse = {
-        candidates?: Array<{
-          content?: {
-            parts?: Array<{ text?: string }>;
-          };
-        }>;
-      };
-      const data = (await res.json()) as GeminiResponse;
-      const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (textContent) {
-        parsed = JSON.parse(textContent);
-      } else {
-        throw new Error('Empty Gemini response content');
+        if (!res.ok) {
+          const errBody = await res.text();
+          throw new Error(`Google Gemini HTTP ${res.status}: ${errBody}`);
+        }
+
+        type GeminiResponse = {
+          candidates?: Array<{
+            content?: {
+              parts?: Array<{ text?: string }>;
+            };
+          }>;
+        };
+        const data = (await res.json()) as GeminiResponse;
+        const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (textContent) {
+          parsed = JSON.parse(textContent);
+          inputSource = 'ai';
+          try {
+            await incrementAiUsage(db, modelName);
+          } catch (dbErr) {
+            console.error('Failed to increment AI usage counter in chat:', dbErr);
+          }
+        } else {
+          throw new Error('Empty Gemini response content');
+        }
+      } catch (err) {
+        console.error('Gemini API error, falling back to local heuristic:', err);
+        inputSource = 'local_parser';
+        parsed = fallbackLocalParser(message, todayStr, currentTimeStr);
       }
-    } catch (err) {
-      console.error('Gemini API error, falling back to local heuristic:', err);
-      parsed = fallbackLocalParser(message, todayStr, currentTimeStr);
     }
   } else {
+    inputSource = 'local_parser';
     parsed = fallbackLocalParser(message, todayStr, currentTimeStr);
   }
 
@@ -162,9 +186,14 @@ Kembalikan format JSON:
       debtor: parsed.debtor?.trim().toUpperCase() || null,
       creditor: parsed.creditor?.trim().toUpperCase() || null,
       debtAmount: parsed.debt_amount ? Math.round(parsed.debt_amount) : 0,
-      notes: parsed.notes || null
+      notes: parsed.notes || null,
+      source: inputSource
     })
     .returning();
+
+  console.log(
+    `[TRANSACTION_LOGGER] ID: ${inserted[0].id} | Nama: "${inserted[0].name}" | Rp${inserted[0].amount} | Kategori: ${inserted[0].category} | Sumber: ${inputSource.toUpperCase()} (${inputSource === 'ai' ? 'Gemini AI' : 'Parser Lokal'})`
+  );
 
   // Update debts
   if (parsed.debtor && parsed.debt_amount) {
@@ -230,9 +259,29 @@ function fallbackLocalParser(
 ): GeminiParsedResponse {
   const lower = text.toLowerCase();
 
-  // Extract number (e.g. 15k, 15rb, 15000, 15.000)
+  // Date detection & backdating
+  let targetDate = today;
+  if (lower.includes('kemarin')) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - 1);
+    targetDate = d.toISOString().split('T')[0];
+  }
+
+  // Time detection
+  let targetTime = currentTime;
+  if (lower.includes('pagi')) {
+    targetTime = '07:00:00';
+  } else if (lower.includes('siang')) {
+    targetTime = '12:00:00';
+  } else if (lower.includes('sore')) {
+    targetTime = '17:00:00';
+  } else if (lower.includes('malam')) {
+    targetTime = '20:00:00';
+  }
+
+  // Extract number (e.g. 15k, 15rb, 15ribu, 15000, 15.000, Rp20.000)
   let amount = 0;
-  const numMatch = lower.match(/(\d+[\d.,]*)\s*(k|rb|ribu)?/);
+  const numMatch = lower.match(/(?:rp\.?\s*)?(\d+[\d.,]*)\s*(k|rb|ribu)?/);
   if (numMatch) {
     const raw = numMatch[1].replace(/[.,]/g, '');
     let val = parseInt(raw, 10);
@@ -244,33 +293,54 @@ function fallbackLocalParser(
 
   // Category detection
   let category: GeminiParsedResponse['category'] = 'Jajan';
-  if (lower.includes('bensin') || lower.includes('motor') || lower.includes('servis'))
+  if (
+    lower.includes('bensin') ||
+    lower.includes('motor') ||
+    lower.includes('servis') ||
+    lower.includes('oli') ||
+    lower.includes('tambal')
+  ) {
     category = 'Motor';
-  else if (
+  } else if (
     lower.includes('soto') ||
     lower.includes('mie') ||
     lower.includes('nasi') ||
     lower.includes('makan') ||
-    lower.includes('ayam')
-  )
+    lower.includes('ayam') ||
+    lower.includes('bakso') ||
+    lower.includes('warteg') ||
+    lower.includes('bebek')
+  ) {
     category = 'Makan';
-  else if (
+  } else if (
     lower.includes('listrik') ||
     lower.includes('kos') ||
+    lower.includes('kost') ||
     lower.includes('galon') ||
     lower.includes('pulsa') ||
-    lower.includes('paket')
-  )
+    lower.includes('paket') ||
+    lower.includes('sabun') ||
+    lower.includes('odol')
+  ) {
     category = 'Primer';
-  else if (lower.includes('basket') || lower.includes('gym') || lower.includes('renang'))
+  } else if (
+    lower.includes('basket') ||
+    lower.includes('gym') ||
+    lower.includes('renang') ||
+    lower.includes('futsal') ||
+    lower.includes('badminton')
+  ) {
     category = 'Olga';
-  else if (
+  } else if (
     lower.includes('celana') ||
     lower.includes('baju') ||
     lower.includes('parfum') ||
-    lower.includes('sepatu')
-  )
+    lower.includes('sepatu') ||
+    lower.includes('tas') ||
+    lower.includes('kaos')
+  ) {
     category = 'Belanja';
+  }
 
   // Debt detection
   let debtor = '';
@@ -286,19 +356,29 @@ function fallbackLocalParser(
     debtAmount = amount;
   }
 
-  // Clean item name
-  const name =
-    text
-      .replace(/(\d+[\d.,]*)\s*(k|rb|ribu)?/gi, '')
-      .replace(/(tadi|kemarin|malam|pagi|siang|beli|makan|isi|nalangi|ditalangi)\s*/gi, '')
-      .trim() || 'Pengeluaran';
+  // Clean item name: remove currency, numbers, and conversational stop-words
+  let clean = text
+    .replace(/(?:rp\.?|rupiah)\s*(\d+[\d.,]*)\s*(k|rb|ribu)?/gi, '')
+    .replace(/(\d+[\d.,]*)\s*(k|rb|ribu)?/gi, '')
+    .replace(/\b(rp|rupiah)\b/gi, '');
+
+  const stopWordsRegex =
+    /\b(hari\s+ini|kemarin|tadi|pagi|siang|sore|malam|saya|aku|gue|gw|gua|ane|beli|membeli|makan|minum|isi|bayar|buat|untuk|sebesar|habis|di|ke|nalangi|ditalangi)\b/gi;
+  clean = clean.replace(stopWordsRegex, '').replace(/\s+/g, ' ').trim();
+  clean = clean.replace(/^[^\w]+|[^\w]+$/g, '').trim();
+
+  const name = clean
+    ? clean.charAt(0).toUpperCase() + clean.slice(1)
+    : category !== 'Jajan'
+      ? category
+      : 'Pengeluaran';
 
   return {
     action: 'expense',
-    name: name.charAt(0).toUpperCase() + name.slice(1),
+    name,
     amount: amount || 10000,
-    date: today,
-    time: currentTime,
+    date: targetDate,
+    time: targetTime,
     category,
     debtor,
     creditor,

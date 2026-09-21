@@ -7,6 +7,7 @@ export const transactionsRoute = new Hono<{ Bindings: Bindings }>()
   .get('/', async (c) => {
     const db = getDb(c.env.DB);
     const month = c.req.query('month'); // e.g. '2026-09'
+    const date = c.req.query('date'); // e.g. '2026-09-21' or 'all'
     const category = c.req.query('category');
     const search = c.req.query('search');
     const limit = parseInt(c.req.query('limit') || '50', 10);
@@ -14,7 +15,9 @@ export const transactionsRoute = new Hono<{ Bindings: Bindings }>()
 
     const conditions = [];
 
-    if (month) {
+    if (date && date !== 'all') {
+      conditions.push(eq(schema.transactions.date, date));
+    } else if (month) {
       conditions.push(like(schema.transactions.date, `${month}%`));
     }
     if (category && category !== 'Semua') {
@@ -54,11 +57,14 @@ export const transactionsRoute = new Hono<{ Bindings: Bindings }>()
       creditor?: string;
       debtAmount?: number;
       notes?: string;
+      source?: string; // 'ai' | 'manual' | 'local_parser'
     }>();
 
     if (!body.name || !body.amount || !body.date || !body.category) {
       return c.json({ success: false, error: 'Data transaksi tidak lengkap' }, 400);
     }
+
+    const source = body.source?.trim() || 'manual';
 
     const inserted = await db
       .insert(schema.transactions)
@@ -71,9 +77,14 @@ export const transactionsRoute = new Hono<{ Bindings: Bindings }>()
         debtor: body.debtor?.trim() || null,
         creditor: body.creditor?.trim() || null,
         debtAmount: body.debtAmount ? Math.round(body.debtAmount) : 0,
-        notes: body.notes?.trim() || null
+        notes: body.notes?.trim() || null,
+        source
       })
       .returning();
+
+    console.log(
+      `[TRANSACTION_LOGGER] ID: ${inserted[0].id} | Nama: "${inserted[0].name}" | Rp${inserted[0].amount} | Kategori: ${inserted[0].category} | Sumber: ${inserted[0].source.toUpperCase()} (${inserted[0].source === 'ai' ? 'Gemini AI' : 'Manual'})`
+    );
 
     // Update debts table if debtor or creditor is specified
     if (body.debtor && body.debtAmount) {

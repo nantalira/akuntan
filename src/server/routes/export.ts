@@ -38,12 +38,16 @@ export const exportRoute = new Hono<{ Bindings: Bindings }>().get('/', async (c)
     'Menalangi (Piutang)',
     'Ditalangi (Hutang)',
     'Nominal Hutang',
-    'Catatan'
+    'Catatan',
+    'Sumber Input'
   ];
 
   const csvLines = [headers.join(',')];
 
   for (const row of rows) {
+    const sourceLabel =
+      row.source === 'ai' ? 'AI' : row.source === 'local_parser' ? 'Parser Lokal' : 'Manual';
+
     const line = [
       escapeCsv(row.id),
       escapeCsv(row.date),
@@ -54,7 +58,8 @@ export const exportRoute = new Hono<{ Bindings: Bindings }>().get('/', async (c)
       escapeCsv(row.debtor || ''),
       escapeCsv(row.creditor || ''),
       escapeCsv(row.debtAmount || 0),
-      escapeCsv(row.notes || '')
+      escapeCsv(row.notes || ''),
+      escapeCsv(sourceLabel)
     ];
     csvLines.push(line.join(','));
   }

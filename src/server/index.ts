@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { aiQuotaRoute } from './routes/aiQuota';
 import { analyticsRoute } from './routes/analytics';
 import { budgetsRoute } from './routes/budgets';
 import { chatRoute } from './routes/chat';
@@ -13,6 +14,7 @@ export type Bindings = {
   GEMINI_API_KEY?: string;
   GEMINI_MODEL?: string;
   APP_PASSCODE?: string;
+  AI_DAILY_LIMIT?: string;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -25,6 +27,7 @@ const apiRoutes = app
   })
   .route('/api/transactions', transactionsRoute)
   .route('/api/chat', chatRoute)
+  .route('/api/ai-quota', aiQuotaRoute)
   .route('/api/scan-receipt', scanReceiptRoute)
   .route('/api/analytics', analyticsRoute)
   .route('/api/debts', debtsRoute)

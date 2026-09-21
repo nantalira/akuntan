@@ -171,7 +171,8 @@ export function ReceiptScannerModal({ isOpen, onClose, onSuccess }: ReceiptScann
           category,
           date: date || new Date().toISOString().split('T')[0],
           time: extractedData?.time || new Date().toTimeString().split(' ')[0],
-          notes: notes.trim()
+          notes: notes.trim(),
+          source: 'ai'
         })
       });
 

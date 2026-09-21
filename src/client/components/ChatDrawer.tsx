@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
+import { useAiQuota } from '../hooks/useAiQuota';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { ReceiptScannerModal } from './ReceiptScannerModal';
 
@@ -40,6 +41,25 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isCooldown, setIsCooldown] = useState(false);
+  const cooldownTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const { quota, refetch: refetchQuota } = useAiQuota();
+
+  const triggerCooldown = useCallback(() => {
+    setIsCooldown(true);
+    if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
+    cooldownTimerRef.current = setTimeout(() => {
+      setIsCooldown(false);
+    }, 1500);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
+    };
+  }, []);
+
   const {
     isListening,
     isSupported,
@@ -75,7 +95,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
         textarea.style.height = '115px';
         textarea.style.overflowY = 'auto';
       } else {
-        textarea.style.height = `${Math.max(scrollHeight, 42)}px`;
+        textarea.style.height = `${Math.max(scrollHeight, 36)}px`;
         textarea.style.overflowY = 'hidden';
       }
     }
@@ -88,12 +108,15 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
   useEffect(() => {
     if (isOpen) {
       scrollToBottom();
+      refetchQuota();
     }
-  }, [isOpen, scrollToBottom]);
+  }, [isOpen, scrollToBottom, refetchQuota]);
 
   const handleSend = async (textToSend?: string) => {
     const text = (textToSend || input).trim();
-    if (!text || isLoading) return;
+    if (!text || isLoading || isCooldown) return;
+
+    triggerCooldown();
 
     const userMsg: Message = {
       id: Date.now().toString(),
@@ -145,6 +168,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
       ]);
     } finally {
       setIsLoading(false);
+      refetchQuota();
     }
   };
 
@@ -173,7 +197,31 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
                   <Bot className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-800 text-sm">Akuntan AI</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-slate-800 text-sm">Akuntan AI</h3>
+                    {quota && (
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border transition-colors ${
+                          quota.status === 'exceeded'
+                            ? 'bg-rose-50 text-rose-700 border-rose-200'
+                            : quota.status === 'warning'
+                              ? 'bg-amber-50 text-amber-700 border-amber-200'
+                              : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        }`}
+                        title={`Model: ${quota.model} | Terpakai: ${quota.used}/${quota.limit}`}
+                      >
+                        {quota.status === 'exceeded' ? (
+                          <>
+                            ⛔ Kuota AI Habis ({quota.used}/{quota.limit})
+                          </>
+                        ) : (
+                          <>
+                            ✨ AI: {quota.used}/{quota.limit} ({quota.remaining} sisa)
+                          </>
+                        )}
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
                     <span className="text-[11px] text-slate-400">Siap mencatat</span>
@@ -267,70 +315,98 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
               </div>
             )}
 
-            {/* Input Bar */}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleSend();
-              }}
-              className="p-3 bg-white border-t border-slate-100 flex items-end gap-1.5 sm:gap-2 w-full"
-            >
-              <textarea
-                ref={textareaRef}
-                rows={1}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSend();
-                  }
+            {/* Input Bar (Unified Card - Approach 1) */}
+            <div className="p-3 bg-white border-t border-slate-100">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleSend();
                 }}
-                placeholder={isListening ? 'Mendengarkan...' : "Ketik: 'Makan ayam 18k'..."}
-                className={`flex-1 min-w-0 bg-slate-50 border rounded-2xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:bg-white resize-none transition-[border-color,box-shadow] leading-relaxed custom-scrollbar ${
+                className={`bg-slate-50 border rounded-2xl p-2.5 transition-all flex flex-col focus-within:bg-white focus-within:ring-2 ${
                   isListening
-                    ? 'border-rose-400 focus:ring-rose-200 ring-1 ring-rose-200'
-                    : 'border-slate-200 focus:ring-emerald-300'
+                    ? 'border-rose-400 ring-1 ring-rose-200'
+                    : 'border-slate-200 focus-within:ring-emerald-300 focus-within:border-emerald-400'
                 }`}
-                style={{ maxHeight: '115px' }}
-                disabled={isLoading}
-              />
+              >
+                {/* 100% Full-Width Textarea */}
+                <textarea
+                  ref={textareaRef}
+                  rows={1}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSend();
+                    }
+                  }}
+                  placeholder={
+                    isListening
+                      ? 'Mendengarkan suara Anda...'
+                      : "Ketik pengeluaran (misal: 'Makan ayam 18k')..."
+                  }
+                  className="w-full bg-transparent border-0 px-1 py-1 text-sm focus:outline-none resize-none leading-relaxed custom-scrollbar placeholder:text-slate-400"
+                  style={{ maxHeight: '115px' }}
+                  disabled={isLoading}
+                />
 
-              {isSupported && (
-                <div className="relative flex items-center justify-center shrink-0">
+                {/* Bottom Action Toolbar */}
+                <div className="flex items-center justify-between pt-2 mt-1 border-t border-slate-200/50">
+                  <div className="flex items-center gap-1.5">
+                    {isSupported && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (isCooldown) return;
+                          toggleListening();
+                        }}
+                        disabled={isCooldown}
+                        title={
+                          isCooldown
+                            ? 'Jeda cooldown 1.5 detik...'
+                            : isListening
+                              ? 'Berhenti mendengarkan'
+                              : 'Bicara (Input Suara)'
+                        }
+                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all ${
+                          isListening
+                            ? 'bg-rose-500 text-white ring-2 ring-rose-300 animate-pulse shadow-sm shadow-rose-200'
+                            : isCooldown
+                              ? 'bg-slate-100 text-slate-400 border border-slate-200/80 cursor-not-allowed opacity-60'
+                              : 'bg-white hover:bg-slate-100 text-slate-600 border border-slate-200/80 shadow-xs'
+                        }`}
+                      >
+                        {isListening ? (
+                          <MicOff className="w-3.5 h-3.5" />
+                        ) : (
+                          <Mic className="w-3.5 h-3.5" />
+                        )}
+                        <span className="text-[11px]">{isListening ? 'Merekam...' : 'Bicara'}</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setIsReceiptModalOpen(true)}
+                      title="Scan Struk Kasir (Foto/Galeri)"
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white hover:bg-emerald-50 hover:text-emerald-700 text-slate-600 border border-slate-200/80 text-xs font-medium transition-all shadow-xs"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      <span className="text-[11px]">Scan Struk</span>
+                    </button>
+                  </div>
+
                   <button
-                    type="button"
-                    onClick={toggleListening}
-                    title={isListening ? 'Berhenti mendengarkan' : 'Bicara (Input Suara)'}
-                    className={`relative w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-all ${
-                      isListening
-                        ? 'bg-rose-500 text-white ring-2 ring-rose-300 animate-pulse shadow-sm shadow-rose-200'
-                        : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                    }`}
+                    type="submit"
+                    disabled={!input.trim() || isLoading || isCooldown}
+                    title={isCooldown ? 'Tunggu jeda 1.5 detik' : 'Kirim Catatan'}
+                    className="w-8 h-8 sm:w-9 sm:h-9 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-xl flex items-center justify-center shrink-0 transition-all shadow-sm shadow-emerald-200"
                   >
-                    {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                    <Send className="w-3.5 h-3.5" />
                   </button>
                 </div>
-              )}
-
-              <button
-                type="button"
-                onClick={() => setIsReceiptModalOpen(true)}
-                title="Scan Struk Kasir (Foto/Galeri)"
-                className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-600 flex items-center justify-center shrink-0 transition-all"
-              >
-                <Camera className="w-4 h-4" />
-              </button>
-
-              <button
-                type="submit"
-                disabled={!input.trim() || isLoading}
-                title="Kirim Catatan"
-                className="w-10 h-10 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl flex items-center justify-center shrink-0 transition-all shadow-md shadow-emerald-200"
-              >
-                <Send className="w-4 h-4" />
-              </button>
-            </form>
+              </form>
+            </div>
           </div>
         </div>
       )}
@@ -341,6 +417,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
         onClose={() => setIsReceiptModalOpen(false)}
         onSuccess={() => {
           onTransactionAdded();
+          refetchQuota();
           setMessages((prev) => [
             ...prev,
             {
