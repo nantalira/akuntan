@@ -26,6 +26,7 @@ export interface TransactionItem {
   creditor: string | null;
   debtAmount: number | null;
   notes: string | null;
+  paymentMethod?: string | null;
   source?: string | null;
   createdAt: string;
 }
@@ -186,7 +187,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
             }`}
           >
-            Semua Hari
+            Semua
           </button>
 
           {isCurrentMonth && (
@@ -280,6 +281,30 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                     <span className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 font-medium">
                       {tx.category}
                     </span>
+                    {tx.paymentMethod && tx.paymentMethod !== 'Cash' && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200 font-bold"
+                        title={`Dibayar menggunakan ${tx.paymentMethod}`}
+                      >
+                        💳 {tx.paymentMethod}
+                      </span>
+                    )}
+                    {tx.source === 'qris_webhook' && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200 font-semibold flex items-center gap-0.5"
+                        title="Tercatat otomatis dari Webhook QRIS Bank"
+                      >
+                        ⚡ Webhook QRIS
+                      </span>
+                    )}
+                    {tx.source === 'share_target' && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-semibold flex items-center gap-0.5"
+                        title="Tercatat dari fitur Bagikan (Share) Bukti QRIS"
+                      >
+                        📲 Share QRIS
+                      </span>
+                    )}
                     {tx.source === 'ai' && (
                       <span
                         className="text-[10px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 font-medium flex items-center gap-0.5"

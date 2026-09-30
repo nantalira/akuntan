@@ -21,6 +21,7 @@ import {
 } from 'recharts';
 
 import { BudgetHealthCard } from './BudgetHealthCard';
+import { SmartInsightsCard, type SmartInsightsData } from './SmartInsightsCard';
 
 export interface AnalyticsData {
   month: string;
@@ -41,6 +42,7 @@ export interface AnalyticsData {
     totalOwedToUs: number;
     totalWeOwe: number;
   };
+  insights?: SmartInsightsData;
 }
 
 interface DashboardProps {
@@ -207,6 +209,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <p className="text-[11px] text-slate-400 mt-1">Kewajiban bayar ke orang</p>
         </div>
       </div>
+
+      {/* Smart Insights Card */}
+      <SmartInsightsCard insights={data?.insights} displayMonthName={displayMonthName} />
 
       {/* Budget Health Card */}
       <BudgetHealthCard

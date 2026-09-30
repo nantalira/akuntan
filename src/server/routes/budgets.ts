@@ -1,23 +1,41 @@
+import { zValidator } from '@hono/zod-validator';
+import { eq } from 'drizzle-orm';
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { getDb, schema } from '../../db/client';
-import type { Bindings } from '../index';
+import type { AppEnv } from '../index';
 
-export const budgetsRoute = new Hono<{ Bindings: Bindings }>()
+const updateBudgetsSchema = z.object({
+  budgets: z
+    .array(
+      z.object({
+        category: z.string().min(1),
+        monthlyLimit: z.number().nonnegative()
+      })
+    )
+    .optional(),
+  category: z.string().optional(),
+  monthlyLimit: z.number().nonnegative().optional()
+});
+
+export const budgetsRoute = new Hono<AppEnv>()
   .get('/', async (c) => {
     const db = getDb(c.env.DB);
-    const list = await db.select().from(schema.budgets).all();
+    const userId = c.get('userId');
+    const list = await db
+      .select()
+      .from(schema.budgets)
+      .where(eq(schema.budgets.userId, userId))
+      .all();
     return c.json({
       success: true,
       data: list
     });
   })
-  .put('/', async (c) => {
+  .put('/', zValidator('json', updateBudgetsSchema), async (c) => {
     const db = getDb(c.env.DB);
-    const body = await c.req.json<{
-      budgets?: Array<{ category: string; monthlyLimit: number }>;
-      category?: string;
-      monthlyLimit?: number;
-    }>();
+    const userId = c.get('userId');
+    const body = c.req.valid('json');
 
     // Handle array batch update
     if (body.budgets && Array.isArray(body.budgets)) {
@@ -25,11 +43,12 @@ export const budgetsRoute = new Hono<{ Bindings: Bindings }>()
         await db
           .insert(schema.budgets)
           .values({
+            userId,
             category: item.category,
             monthlyLimit: item.monthlyLimit
           })
           .onConflictDoUpdate({
-            target: schema.budgets.category,
+            target: [schema.budgets.userId, schema.budgets.category],
             set: { monthlyLimit: item.monthlyLimit }
           });
       }
@@ -41,11 +60,12 @@ export const budgetsRoute = new Hono<{ Bindings: Bindings }>()
       await db
         .insert(schema.budgets)
         .values({
+          userId,
           category: body.category,
           monthlyLimit: body.monthlyLimit
         })
         .onConflictDoUpdate({
-          target: schema.budgets.category,
+          target: [schema.budgets.userId, schema.budgets.category],
           set: { monthlyLimit: body.monthlyLimit }
         });
       return c.json({ success: true, message: 'Anggaran berhasil diperbarui' });

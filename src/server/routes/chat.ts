@@ -1,8 +1,11 @@
-import { eq, sql } from 'drizzle-orm';
+import { zValidator } from '@hono/zod-validator';
+import { and, eq, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { getDb, schema } from '../../db/client';
-import type { Bindings } from '../index';
-import { getAiQuotaStatus, incrementAiUsage } from '../utils/aiUsage';
+import type { AppEnv } from '../index';
+import { getAiQuotaStatus, incrementAiUsage, resolveUserGeminiConfig } from '../utils/aiUsage';
+import { detectPaymentMethod } from '../utils/paymentParser';
 
 interface GeminiParsedResponse {
   action: 'expense' | 'settlement' | 'split_bill' | 'general';
@@ -11,6 +14,7 @@ interface GeminiParsedResponse {
   date?: string; // YYYY-MM-DD
   time?: string; // HH:mm:ss
   category?: 'Makan' | 'Jajan' | 'Primer' | 'Motor' | 'Olga' | 'Belanja';
+  payment_method?: string;
   debtor?: string;
   creditor?: string;
   debt_amount?: number;
@@ -18,39 +22,49 @@ interface GeminiParsedResponse {
   reply: string;
 }
 
-export const chatRoute = new Hono<{ Bindings: Bindings }>().post('/', async (c) => {
-  const db = getDb(c.env.DB);
-  const { message } = await c.req.json<{ message: string }>();
+const chatMessageSchema = z.object({
+  message: z.string().trim().min(1, 'Pesan tidak boleh kosong')
+});
 
-  if (!message?.trim()) {
-    return c.json({ success: false, error: 'Pesan tidak boleh kosong' }, 400);
-  }
+export const chatRoute = new Hono<AppEnv>().post(
+  '/',
+  zValidator('json', chatMessageSchema),
+  async (c) => {
+    const db = getDb(c.env.DB);
+    const userId = c.get('userId');
+    const { message } = c.req.valid('json');
 
-  // Current WIB (UTC+7) time reference
-  const now = new Date();
-  // Offset for UTC+7
-  const utcTime = now.getTime() + now.getTimezoneOffset() * 60000;
-  const wibDate = new Date(utcTime + 7 * 3600000);
+    // Current WIB (UTC+7) time reference
+    const now = new Date();
+    // Offset for UTC+7
+    const utcTime = now.getTime() + now.getTimezoneOffset() * 60000;
+    const wibDate = new Date(utcTime + 7 * 3600000);
 
-  const todayStr = wibDate.toISOString().split('T')[0]; // YYYY-MM-DD
-  const currentTimeStr = wibDate.toTimeString().split(' ')[0]; // HH:mm:ss
+    const todayStr = wibDate.toISOString().split('T')[0]; // YYYY-MM-DD
+    const currentTimeStr = wibDate.toTimeString().split(' ')[0]; // HH:mm:ss
 
-  const apiKey = c.env.GEMINI_API_KEY;
-  let parsed: GeminiParsedResponse;
-  let inputSource: 'ai' | 'local_parser' = 'local_parser';
+    const { apiKey, isCustomKey } = await resolveUserGeminiConfig(db, userId, c.env.GEMINI_API_KEY);
+    let parsed: GeminiParsedResponse;
+    let inputSource: 'ai' | 'local_parser' = 'local_parser';
 
-  if (apiKey) {
-    const modelName = c.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
-    const quota = await getAiQuotaStatus(db, modelName, c.env.AI_DAILY_LIMIT);
-
-    if (quota.remaining <= 0) {
-      console.warn(
-        `AI Quota reached limit (${quota.used}/${quota.limit}), falling back to local parser`
+    if (apiKey) {
+      const modelName = c.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+      const quota = await getAiQuotaStatus(
+        db,
+        userId,
+        modelName,
+        c.env.AI_DAILY_LIMIT,
+        isCustomKey
       );
-      parsed = fallbackLocalParser(message, todayStr, currentTimeStr);
-    } else {
-      try {
-        const systemInstruction = `Kamu adalah Akuntan AI, asisten pencatatan pengeluaran pribadi berbahasa Indonesia yang cerdas dan teliti.
+
+      if (quota.remaining <= 0) {
+        console.warn(
+          `AI Quota reached limit for user ${userId} (${quota.used}/${quota.limit}), falling back to local parser`
+        );
+        parsed = fallbackLocalParser(message, todayStr, currentTimeStr);
+      } else {
+        try {
+          const systemInstruction = `Kamu adalah Akuntan AI, asisten pencatatan pengeluaran pribadi berbahasa Indonesia yang cerdas dan teliti.
 Hari ini adalah: ${todayStr}, jam saat ini: ${currentTimeStr} (WIB).
 
 Tugasmu adalah menganalisis pesan santai pengguna tentang pengeluaran, hutang, patungan, atau pelunasan, lalu mengembalikan JSON terstruktur.
@@ -88,169 +102,176 @@ Kembalikan format JSON:
   "reply": "kalimat konfirmasi ramah dalam bahasa Indonesia merangkum apa yang dicatat"
 }`;
 
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: message }] }],
-              systemInstruction: { parts: [{ text: systemInstruction }] },
-              generationConfig: {
-                responseMimeType: 'application/json',
-                temperature: 0.1
-              }
-            })
-          }
-        );
+          const res = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: message }] }],
+                systemInstruction: { parts: [{ text: systemInstruction }] },
+                generationConfig: {
+                  responseMimeType: 'application/json',
+                  temperature: 0.1
+                }
+              })
+            }
+          );
 
-        if (!res.ok) {
-          const errBody = await res.text();
-          throw new Error(`Google Gemini HTTP ${res.status}: ${errBody}`);
-        }
-
-        type GeminiResponse = {
-          candidates?: Array<{
-            content?: {
-              parts?: Array<{ text?: string }>;
-            };
-          }>;
-        };
-        const data = (await res.json()) as GeminiResponse;
-        const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (textContent) {
-          parsed = JSON.parse(textContent);
-          inputSource = 'ai';
-          try {
-            await incrementAiUsage(db, modelName);
-          } catch (dbErr) {
-            console.error('Failed to increment AI usage counter in chat:', dbErr);
+          if (!res.ok) {
+            const errBody = await res.text();
+            throw new Error(`Google Gemini HTTP ${res.status}: ${errBody}`);
           }
-        } else {
-          throw new Error('Empty Gemini response content');
+
+          type GeminiResponse = {
+            candidates?: Array<{
+              content?: {
+                parts?: Array<{ text?: string }>;
+              };
+            }>;
+          };
+          const data = (await res.json()) as GeminiResponse;
+          const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (textContent) {
+            parsed = JSON.parse(textContent);
+            inputSource = 'ai';
+            try {
+              await incrementAiUsage(db, userId, modelName);
+            } catch (dbErr) {
+              console.error('Failed to increment AI usage counter in chat:', dbErr);
+            }
+          } else {
+            throw new Error('Empty Gemini response content');
+          }
+        } catch (err) {
+          console.error('Gemini API error, falling back to local heuristic:', err);
+          inputSource = 'local_parser';
+          parsed = fallbackLocalParser(message, todayStr, currentTimeStr);
         }
-      } catch (err) {
-        console.error('Gemini API error, falling back to local heuristic:', err);
-        inputSource = 'local_parser';
-        parsed = fallbackLocalParser(message, todayStr, currentTimeStr);
+      }
+    } else {
+      inputSource = 'local_parser';
+      parsed = fallbackLocalParser(message, todayStr, currentTimeStr);
+    }
+
+    // If general chat / greeting
+    if (parsed.action === 'general' || !parsed.name || !parsed.amount) {
+      return c.json({
+        success: true,
+        recorded: false,
+        reply:
+          parsed.reply ||
+          'Halo! Ketik pengeluaranmu, contoh: "Makan soto 15k", "Bensin 30rb motor", atau "Nalangi Dian 20rb".'
+      });
+    }
+
+    // Handle Settlement
+    if (parsed.action === 'settlement' && parsed.creditor) {
+      const contact = parsed.creditor.trim().toUpperCase();
+      const existing = await db
+        .select()
+        .from(schema.debts)
+        .where(and(eq(schema.debts.userId, userId), eq(schema.debts.contactName, contact)))
+        .get();
+      if (existing) {
+        const newDebt = Math.max(0, existing.totalWeOwe - parsed.amount);
+        await db
+          .update(schema.debts)
+          .set({ totalWeOwe: newDebt, updatedAt: sql`CURRENT_TIMESTAMP` })
+          .where(eq(schema.debts.id, existing.id));
+      }
+      return c.json({
+        success: true,
+        recorded: true,
+        type: 'settlement',
+        reply: `Pelunasan hutang ke ${contact} sebesar Rp ${parsed.amount.toLocaleString('id-ID')} berhasil dicatat! Sisa hutangmu ke ${contact} telah diperbarui.`
+      });
+    }
+
+    const detectedMethod = parsed.payment_method || detectPaymentMethod(message, 'Cash');
+
+    // Insert transaction
+    const inserted = await db
+      .insert(schema.transactions)
+      .values({
+        userId,
+        name: parsed.name,
+        amount: Math.round(parsed.amount),
+        date: parsed.date || todayStr,
+        time: parsed.time || currentTimeStr,
+        category: parsed.category || 'Jajan',
+        debtor: parsed.debtor?.trim().toUpperCase() || null,
+        creditor: parsed.creditor?.trim().toUpperCase() || null,
+        debtAmount: parsed.debt_amount ? Math.round(parsed.debt_amount) : 0,
+        notes: parsed.notes || null,
+        paymentMethod: detectedMethod,
+        source: inputSource
+      })
+      .returning();
+
+    console.log(
+      `[TRANSACTION_LOGGER] User:${userId} | ID: ${inserted[0].id} | Nama: "${inserted[0].name}" | Rp${inserted[0].amount} | Kategori: ${inserted[0].category} | Sumber: ${inputSource.toUpperCase()}`
+    );
+
+    // Update debts (scoped per userId)
+    if (parsed.debtor && parsed.debt_amount) {
+      const contact = parsed.debtor.trim().toUpperCase();
+      const existing = await db
+        .select()
+        .from(schema.debts)
+        .where(and(eq(schema.debts.userId, userId), eq(schema.debts.contactName, contact)))
+        .get();
+      if (existing) {
+        await db
+          .update(schema.debts)
+          .set({
+            totalOwedToUs: existing.totalOwedToUs + parsed.debt_amount,
+            updatedAt: sql`CURRENT_TIMESTAMP`
+          })
+          .where(eq(schema.debts.id, existing.id));
+      } else {
+        await db.insert(schema.debts).values({
+          userId,
+          contactName: contact,
+          totalOwedToUs: parsed.debt_amount,
+          totalWeOwe: 0
+        });
+      }
+    } else if (parsed.creditor && parsed.debt_amount) {
+      const contact = parsed.creditor.trim().toUpperCase();
+      const existing = await db
+        .select()
+        .from(schema.debts)
+        .where(and(eq(schema.debts.userId, userId), eq(schema.debts.contactName, contact)))
+        .get();
+      if (existing) {
+        await db
+          .update(schema.debts)
+          .set({
+            totalWeOwe: existing.totalWeOwe + parsed.debt_amount,
+            updatedAt: sql`CURRENT_TIMESTAMP`
+          })
+          .where(eq(schema.debts.id, existing.id));
+      } else {
+        await db.insert(schema.debts).values({
+          userId,
+          contactName: contact,
+          totalOwedToUs: 0,
+          totalWeOwe: parsed.debt_amount
+        });
       }
     }
-  } else {
-    inputSource = 'local_parser';
-    parsed = fallbackLocalParser(message, todayStr, currentTimeStr);
-  }
 
-  // If general chat / greeting
-  if (parsed.action === 'general' || !parsed.name || !parsed.amount) {
-    return c.json({
-      success: true,
-      recorded: false,
-      reply:
-        parsed.reply ||
-        'Halo! Ketik pengeluaranmu, contoh: "Makan soto 15k", "Bensin 30rb motor", atau "Nalangi Dian 20rb".'
-    });
-  }
-
-  // Handle Settlement
-  if (parsed.action === 'settlement' && parsed.creditor) {
-    const contact = parsed.creditor.trim().toUpperCase();
-    const existing = await db
-      .select()
-      .from(schema.debts)
-      .where(eq(schema.debts.contactName, contact))
-      .get();
-    if (existing) {
-      const newDebt = Math.max(0, existing.totalWeOwe - parsed.amount);
-      await db
-        .update(schema.debts)
-        .set({ totalWeOwe: newDebt, updatedAt: sql`CURRENT_TIMESTAMP` })
-        .where(eq(schema.debts.id, existing.id));
-    }
     return c.json({
       success: true,
       recorded: true,
-      type: 'settlement',
-      reply: `Pelunasan hutang ke ${contact} sebesar Rp ${parsed.amount.toLocaleString('id-ID')} berhasil dicatat! Sisa hutangmu ke ${contact} telah diperbarui.`
+      transaction: inserted[0],
+      reply:
+        parsed.reply ||
+        `Berhasil dicatat: ${parsed.name} Rp ${parsed.amount.toLocaleString('id-ID')} (${parsed.category})`
     });
   }
-
-  // Insert transaction
-  const inserted = await db
-    .insert(schema.transactions)
-    .values({
-      name: parsed.name,
-      amount: Math.round(parsed.amount),
-      date: parsed.date || todayStr,
-      time: parsed.time || currentTimeStr,
-      category: parsed.category || 'Jajan',
-      debtor: parsed.debtor?.trim().toUpperCase() || null,
-      creditor: parsed.creditor?.trim().toUpperCase() || null,
-      debtAmount: parsed.debt_amount ? Math.round(parsed.debt_amount) : 0,
-      notes: parsed.notes || null,
-      source: inputSource
-    })
-    .returning();
-
-  console.log(
-    `[TRANSACTION_LOGGER] ID: ${inserted[0].id} | Nama: "${inserted[0].name}" | Rp${inserted[0].amount} | Kategori: ${inserted[0].category} | Sumber: ${inputSource.toUpperCase()} (${inputSource === 'ai' ? 'Gemini AI' : 'Parser Lokal'})`
-  );
-
-  // Update debts
-  if (parsed.debtor && parsed.debt_amount) {
-    const contact = parsed.debtor.trim().toUpperCase();
-    const existing = await db
-      .select()
-      .from(schema.debts)
-      .where(eq(schema.debts.contactName, contact))
-      .get();
-    if (existing) {
-      await db
-        .update(schema.debts)
-        .set({
-          totalOwedToUs: existing.totalOwedToUs + parsed.debt_amount,
-          updatedAt: sql`CURRENT_TIMESTAMP`
-        })
-        .where(eq(schema.debts.id, existing.id));
-    } else {
-      await db.insert(schema.debts).values({
-        contactName: contact,
-        totalOwedToUs: parsed.debt_amount,
-        totalWeOwe: 0
-      });
-    }
-  } else if (parsed.creditor && parsed.debt_amount) {
-    const contact = parsed.creditor.trim().toUpperCase();
-    const existing = await db
-      .select()
-      .from(schema.debts)
-      .where(eq(schema.debts.contactName, contact))
-      .get();
-    if (existing) {
-      await db
-        .update(schema.debts)
-        .set({
-          totalWeOwe: existing.totalWeOwe + parsed.debt_amount,
-          updatedAt: sql`CURRENT_TIMESTAMP`
-        })
-        .where(eq(schema.debts.id, existing.id));
-    } else {
-      await db.insert(schema.debts).values({
-        contactName: contact,
-        totalOwedToUs: 0,
-        totalWeOwe: parsed.debt_amount
-      });
-    }
-  }
-
-  return c.json({
-    success: true,
-    recorded: true,
-    transaction: inserted[0],
-    reply:
-      parsed.reply ||
-      `Berhasil dicatat: ${parsed.name} Rp ${parsed.amount.toLocaleString('id-ID')} (${parsed.category})`
-  });
-});
+);
 
 function fallbackLocalParser(
   text: string,

@@ -24,7 +24,23 @@ export default defineConfig({
             sizes: '192x192 512x512',
             type: 'image/svg+xml'
           }
-        ]
+        ],
+        share_target: {
+          action: '/api/share-target',
+          method: 'POST',
+          enctype: 'multipart/form-data',
+          params: {
+            title: 'title',
+            text: 'text',
+            url: 'url',
+            files: [
+              {
+                name: 'receipt',
+                accept: ['image/*']
+              }
+            ]
+          }
+        }
       }
     }),
     devServer({

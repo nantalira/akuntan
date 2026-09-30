@@ -1,7 +1,9 @@
+import { zValidator } from '@hono/zod-validator';
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { getDb } from '../../db/client';
-import type { Bindings } from '../index';
-import { getAiQuotaStatus, incrementAiUsage } from '../utils/aiUsage';
+import type { AppEnv } from '../index';
+import { getAiQuotaStatus, incrementAiUsage, resolveUserGeminiConfig } from '../utils/aiUsage';
 
 export type ReceiptExtractedData = {
   merchant: string;
@@ -14,46 +16,56 @@ export type ReceiptExtractedData = {
   confidence: 'high' | 'medium' | 'low';
 };
 
-export const scanReceiptRoute = new Hono<{ Bindings: Bindings }>().post('/', async (c) => {
-  const apiKey = c.env.GEMINI_API_KEY;
-  const modelName = c.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+const scanReceiptSchema = z.object({
+  imageBase64: z.string().min(1, 'Gambar struk tidak boleh kosong'),
+  mimeType: z.string().optional()
+});
 
-  if (!apiKey) {
-    return c.json({ success: false, error: 'GEMINI_API_KEY belum dikonfigurasi' }, 500);
-  }
+export const scanReceiptRoute = new Hono<AppEnv>().post(
+  '/',
+  zValidator('json', scanReceiptSchema),
+  async (c) => {
+    const db = getDb(c.env.DB);
+    const userId = c.get('userId');
+    const modelName = c.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 
-  const db = getDb(c.env.DB);
-  const quota = await getAiQuotaStatus(db, modelName, c.env.AI_DAILY_LIMIT);
-  if (quota.remaining <= 0) {
-    return c.json(
-      {
-        success: false,
-        error: 'Kuota harian AI telah habis. Silakan catat transaksi secara manual.'
-      },
-      429
-    );
-  }
+    const { apiKey, isCustomKey } = await resolveUserGeminiConfig(db, userId, c.env.GEMINI_API_KEY);
 
-  const { imageBase64, mimeType = 'image/jpeg' } = await c.req.json<{
-    imageBase64: string;
-    mimeType?: string;
-  }>();
+    if (!apiKey) {
+      return c.json(
+        {
+          success: false,
+          error: 'GEMINI_API_KEY belum dikonfigurasi di server maupun di Pengaturan Profil Anda'
+        },
+        500
+      );
+    }
 
-  if (!imageBase64) {
-    return c.json({ success: false, error: 'Gambar struk tidak boleh kosong' }, 400);
-  }
+    const quota = await getAiQuotaStatus(db, userId, modelName, c.env.AI_DAILY_LIMIT, isCustomKey);
+    if (quota.remaining <= 0) {
+      return c.json(
+        {
+          success: false,
+          error:
+            'Kuota harian AI telah habis. Silakan catat manual atau masukkan Gemini API Key pribadi di Pengaturan Profil.'
+        },
+        429
+      );
+    }
 
-  // Clean data URL prefix if present (e.g. data:image/png;base64,xxxx)
-  const cleanBase64 = imageBase64.replace(/^data:[a-zA-Z0-9/+-]+;base64,/, '').trim();
+    const { imageBase64, mimeType = 'image/jpeg' } = c.req.valid('json');
 
-  // Current WIB (UTC+7) reference
-  const now = new Date();
-  const utcTime = now.getTime() + now.getTimezoneOffset() * 60000;
-  const wibDate = new Date(utcTime + 7 * 3600000);
-  const todayStr = wibDate.toISOString().split('T')[0];
-  const currentTimeStr = wibDate.toTimeString().split(' ')[0];
+    // Clean data URL prefix if present (e.g. data:image/png;base64,xxxx)
+    const cleanBase64 = imageBase64.replace(/^data:[a-zA-Z0-9/+-]+;base64,/, '').trim();
 
-  const systemPrompt = `Kamu adalah OCR akuntan struk kasir berbahasa Indonesia yang sangat teliti.
+    // Current WIB (UTC+7) reference
+    const now = new Date();
+    const utcTime = now.getTime() + now.getTimezoneOffset() * 60000;
+    const wibDate = new Date(utcTime + 7 * 3600000);
+    const todayStr = wibDate.toISOString().split('T')[0];
+    const currentTimeStr = wibDate.toTimeString().split(' ')[0];
+
+    const systemPrompt = `Kamu adalah OCR akuntan struk kasir berbahasa Indonesia yang sangat teliti.
 Tugasmu adalah menganalisis foto struk belanjaan kasir (minimarket, supermarket, restoran, kafe, SPBU, apotek, toko baju, perkakas, dll).
 Hari ini adalah: ${todayStr}, jam saat ini: ${currentTimeStr} (WIB).
 
@@ -85,99 +97,100 @@ Kembalikan respon DALAM FORMAT JSON PERSIS SEPERTI INI:
   "confidence": "high"
 }`;
 
-  try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                { text: systemPrompt },
-                {
-                  inlineData: {
-                    mimeType: mimeType,
-                    data: cleanBase64
-                  }
-                }
-              ]
-            }
-          ],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            temperature: 0.1
-          }
-        })
-      }
-    );
-
-    if (!res.ok) {
-      const errBody = await res.text();
-      throw new Error(`Google Gemini HTTP ${res.status}: ${errBody}`);
-    }
-
-    type GeminiVisionResponse = {
-      candidates?: Array<{
-        content?: {
-          parts?: Array<{ text?: string }>;
-        };
-      }>;
-      error?: {
-        message?: string;
-        code?: number;
-      };
-    };
-
-    const data = (await res.json()) as GeminiVisionResponse;
-
-    if (data.error) {
-      throw new Error(`Gemini API Error: ${data.error.message || JSON.stringify(data.error)}`);
-    }
-
-    const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!textContent) {
-      throw new Error('Gemini tidak mengembalikan teks ekstraksi');
-    }
-
-    const parsed = JSON.parse(textContent) as ReceiptExtractedData;
     try {
-      await incrementAiUsage(db, modelName);
-    } catch (dbErr) {
-      console.error('Failed to increment AI usage counter in scanReceipt:', dbErr);
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  { text: systemPrompt },
+                  {
+                    inlineData: {
+                      mimeType: mimeType,
+                      data: cleanBase64
+                    }
+                  }
+                ]
+              }
+            ],
+            generationConfig: {
+              responseMimeType: 'application/json',
+              temperature: 0.1
+            }
+          })
+        }
+      );
+
+      if (!res.ok) {
+        const errBody = await res.text();
+        throw new Error(`Google Gemini HTTP ${res.status}: ${errBody}`);
+      }
+
+      type GeminiVisionResponse = {
+        candidates?: Array<{
+          content?: {
+            parts?: Array<{ text?: string }>;
+          };
+        }>;
+        error?: {
+          message?: string;
+          code?: number;
+        };
+      };
+
+      const data = (await res.json()) as GeminiVisionResponse;
+
+      if (data.error) {
+        throw new Error(`Gemini API Error: ${data.error.message || JSON.stringify(data.error)}`);
+      }
+
+      const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!textContent) {
+        throw new Error('Gemini tidak mengembalikan teks ekstraksi');
+      }
+
+      const parsed = JSON.parse(textContent) as ReceiptExtractedData;
+      try {
+        await incrementAiUsage(db, userId, modelName);
+      } catch (dbErr) {
+        console.error('Failed to increment AI usage counter in scanReceipt:', dbErr);
+      }
+
+      // Normalize category
+      const validCategories = ['Makan', 'Jajan', 'Primer', 'Motor', 'Olga', 'Belanja'] as const;
+      let safeCategory: (typeof validCategories)[number] = 'Belanja';
+      if (validCategories.includes(parsed.category as (typeof validCategories)[number])) {
+        safeCategory = parsed.category as (typeof validCategories)[number];
+      }
+
+      const normalizedData: ReceiptExtractedData = {
+        merchant: parsed.merchant || 'Struk Belanja',
+        amount: Math.round(Number(parsed.amount) || 0),
+        category: safeCategory,
+        date: parsed.date || todayStr,
+        time: parsed.time || currentTimeStr,
+        items: Array.isArray(parsed.items) ? parsed.items : [],
+        notes: parsed.notes || (Array.isArray(parsed.items) ? parsed.items.join(', ') : ''),
+        confidence: parsed.confidence || 'medium'
+      };
+
+      return c.json({
+        success: true,
+        data: normalizedData
+      });
+    } catch (err) {
+      console.error('Scan receipt error:', err);
+      return c.json(
+        {
+          success: false,
+          error: err instanceof Error ? err.message : 'Gagal memproses gambar struk kasir'
+        },
+        500
+      );
     }
-
-    // Normalize category
-    const validCategories = ['Makan', 'Jajan', 'Primer', 'Motor', 'Olga', 'Belanja'] as const;
-    let safeCategory: (typeof validCategories)[number] = 'Belanja';
-    if (validCategories.includes(parsed.category as (typeof validCategories)[number])) {
-      safeCategory = parsed.category as (typeof validCategories)[number];
-    }
-
-    const normalizedData: ReceiptExtractedData = {
-      merchant: parsed.merchant || 'Struk Belanja',
-      amount: Math.round(Number(parsed.amount) || 0),
-      category: safeCategory,
-      date: parsed.date || todayStr,
-      time: parsed.time || currentTimeStr,
-      items: Array.isArray(parsed.items) ? parsed.items : [],
-      notes: parsed.notes || (Array.isArray(parsed.items) ? parsed.items.join(', ') : ''),
-      confidence: parsed.confidence || 'medium'
-    };
-
-    return c.json({
-      success: true,
-      data: normalizedData
-    });
-  } catch (err) {
-    console.error('Scan receipt error:', err);
-    return c.json(
-      {
-        success: false,
-        error: err instanceof Error ? err.message : 'Gagal memproses gambar struk kasir'
-      },
-      500
-    );
   }
-});
+);

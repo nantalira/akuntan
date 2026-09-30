@@ -22,9 +22,9 @@ Aplikasi Akuntan AI saat ini memiliki fondasi kokoh berbasis Cloudflare Workers 
 - **Keputusan**: Menggunakan skema tabel `budgets` (`id`, `category`, `monthlyLimit`) yang sudah tersedia di D1.
 - **Rasional**: Tidak memerlukan migrasi skema tabel baru untuk budgeting. Endpoint `/api/budgets` menyediakan operasi GET dan PUT untuk menyimpan batas limit per kategori.
 
-### 2. Algoritma Smart Insights di Server
-- **Keputusan**: Agregasi data komparasi MoM dihitung di endpoint `/api/analytics` atau `/api/analytics/insights`.
-- **Rasional**: Query SQL D1 dapat membandingkan agregat tanggal 1 s/d hari ini pada bulan berjalan dengan tanggal 1 s/d tanggal yang sama di bulan lalu secara instan (<10ms).
+### 2. Algoritma Smart Insights Hybrid (SQL Instan + Evaluasi AI On-Demand)
+- **Keputusan**: Agregasi statistik utama (MoM, transaksi terbesar, hari paling konsumtif) dihitung secara otomatis via SQL D1 pada endpoint `GET /api/analytics` (0 kuota AI), sedangkan evaluasi naratif keuangan dari Gemini disediakan secara *on-demand* melalui endpoint `POST /api/analytics/ai-insight` ketika pengguna menekan tombol `"✨ Minta Evaluasi AI"`.
+- **Rasional**: Query SQL D1 membandingkan agregat tanggal 1 s/d hari ini pada bulan berjalan dengan tanggal 1 s/d tanggal yang sama di bulan lalu secara instan (<10ms) tanpa memotong kuota harian Gemini saat pengguna membuka atau memuat ulang Dashboard. Kuota Gemini (+1) hanya digunakan ketika pengguna secara eksplisit meminta analisis naratif.
 
 ### 3. Ekspor Data Streaming CSV Ringan
 - **Keputusan**: Generate file CSV langsung dari memori Worker menggunakan standard text header `Content-Type: text/csv` dan `Content-Disposition: attachment`.

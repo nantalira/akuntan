@@ -1,12 +1,26 @@
-import { desc, eq, sql } from 'drizzle-orm';
+import { zValidator } from '@hono/zod-validator';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { getDb, schema } from '../../db/client';
-import type { Bindings } from '../index';
+import type { AppEnv } from '../index';
 
-export const debtsRoute = new Hono<{ Bindings: Bindings }>()
+const settleDebtSchema = z.object({
+  contactName: z.string().min(1, 'Nama kontak harus diisi'),
+  amount: z.number().nonnegative().optional(),
+  target: z.enum(['we_owe', 'owed_to_us'])
+});
+
+export const debtsRoute = new Hono<AppEnv>()
   .get('/', async (c) => {
     const db = getDb(c.env.DB);
-    const rows = await db.select().from(schema.debts).orderBy(desc(schema.debts.updatedAt)).all();
+    const userId = c.get('userId');
+    const rows = await db
+      .select()
+      .from(schema.debts)
+      .where(eq(schema.debts.userId, userId))
+      .orderBy(desc(schema.debts.updatedAt))
+      .all();
 
     const data = rows.map((r) => ({
       id: r.id,
@@ -19,23 +33,16 @@ export const debtsRoute = new Hono<{ Bindings: Bindings }>()
 
     return c.json({ success: true, data });
   })
-  .post('/settle', async (c) => {
+  .post('/settle', zValidator('json', settleDebtSchema), async (c) => {
     const db = getDb(c.env.DB);
-    const body = await c.req.json<{
-      contactName: string;
-      amount?: number; // jika kosong, lunas total
-      target: 'we_owe' | 'owed_to_us';
-    }>();
-
-    if (!body.contactName) {
-      return c.json({ success: false, error: 'Nama kontak harus diisi' }, 400);
-    }
+    const userId = c.get('userId');
+    const body = c.req.valid('json');
 
     const contact = body.contactName.trim().toUpperCase();
     const existing = await db
       .select()
       .from(schema.debts)
-      .where(eq(schema.debts.contactName, contact))
+      .where(and(eq(schema.debts.userId, userId), eq(schema.debts.contactName, contact)))
       .get();
 
     if (!existing) {

@@ -21,3 +21,10 @@ Sistem SHALL menyorot transaksi tunggal paling mahal di bulan berjalan dan hari 
 #### Scenario: Display highest transaction and peak day
 - **WHEN** pengguna membuka Dashboard
 - **THEN** kartu Insight menampilkan nama dan nominal transaksi terbesar serta analisis hari terboros (misal: "Hari terboros rata-rata pada hari Sabtu")
+
+### Requirement: On-Demand AI Financial Evaluation
+Sistem SHALL menyediakan tombol aksi opsional ("✨ Minta Evaluasi AI") pada kartu Smart Insights untuk menghasilkan analisis dan saran penghematan naratif singkat menggunakan Google Gemini API hanya ketika diminta oleh pengguna.
+
+#### Scenario: User requests AI financial evaluation
+- **WHEN** pengguna menekan tombol "✨ Minta Evaluasi AI" pada kartu Smart Insights
+- **THEN** sistem mengirimkan ringkasan statistik bulan tersebut ke Gemini API, menampilkan 2-3 kalimat saran keuangan yang dipersonalisasi, dan menambahkan hitungan kuota harian AI (+1)

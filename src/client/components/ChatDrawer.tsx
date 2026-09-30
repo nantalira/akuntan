@@ -10,7 +10,7 @@ import {
   User,
   X
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { useAiQuota } from '../hooks/useAiQuota';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
@@ -27,24 +27,95 @@ interface ChatDrawerProps {
   onTransactionAdded: () => void;
 }
 
-const QUICK_SUGGESTIONS = [
-  'Makan soto 15k',
-  'Bensin 30rb motor',
-  'Nalangi Dian 20rb',
-  'Patungan listrik 100rb berdua sama Dian, Dian yang bayar',
-  'Kemarin malam beli pulsa 25rb primer',
-  'Bayar hutang Dian 61rb'
-];
+interface FrequentItem {
+  name: string;
+  amount: number;
+  category: string;
+  frequency: number;
+}
+
+const getCategoryEmoji = (category: string) => {
+  switch (category?.toLowerCase()) {
+    case 'makan':
+      return '🍜';
+    case 'jajan':
+      return '☕';
+    case 'primer':
+      return '🛒';
+    case 'motor':
+      return '⛽';
+    case 'olga':
+      return '🏸';
+    case 'belanja':
+      return '🛍️';
+    default:
+      return '💰';
+  }
+};
+
+const formatAmountShort = (amount: number) => {
+  if (amount >= 1000) {
+    const inK = amount / 1000;
+    return Number.isInteger(inK) ? `${inK}k` : `${inK.toFixed(1)}k`;
+  }
+  return String(amount);
+};
 
 export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
+  const [sharedImage, setSharedImage] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isCooldown, setIsCooldown] = useState(false);
   const cooldownTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const { quota, refetch: refetchQuota } = useAiQuota();
+  const [frequentItems, setFrequentItems] = useState<FrequentItem[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(true);
+
+  useEffect(() => {
+    try {
+      const rawShared = localStorage.getItem('akuntan_shared_receipt');
+      if (rawShared) {
+        localStorage.removeItem('akuntan_shared_receipt');
+        if (window.location.search.includes('shared_receipt=1')) {
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+        const parsed = JSON.parse(rawShared) as {
+          imageBase64?: string;
+          text?: string;
+          title?: string;
+        };
+        if (parsed.imageBase64) {
+          setSharedImage(parsed.imageBase64);
+          setIsReceiptModalOpen(true);
+        } else if (parsed.text || parsed.title) {
+          const combined = [parsed.title, parsed.text].filter(Boolean).join(' - ');
+          setIsOpen(true);
+          setInput(`QRIS ${combined}`);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to process shared receipt:', err);
+    }
+  }, []);
+
+  const fetchFrequentItems = useCallback(async () => {
+    try {
+      const res = await api.api.transactions.frequent.$get({
+        query: { limit: '15' }
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          setFrequentItems(json.data);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch frequent items:', err);
+    }
+  }, []);
 
   const triggerCooldown = useCallback(() => {
     setIsCooldown(true);
@@ -109,8 +180,27 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
     if (isOpen) {
       scrollToBottom();
       refetchQuota();
+      fetchFrequentItems();
     }
-  }, [isOpen, scrollToBottom, refetchQuota]);
+  }, [isOpen, scrollToBottom, refetchQuota, fetchFrequentItems]);
+
+  const trimmedInput = input.trim().toLowerCase();
+  const displayedChips = useMemo(() => {
+    if (!trimmedInput) {
+      return frequentItems.slice(0, 6);
+    }
+    return frequentItems
+      .filter((item) => item.name.toLowerCase().includes(trimmedInput))
+      .slice(0, 6);
+  }, [frequentItems, trimmedInput]);
+
+  const handleChipClick = (item: FrequentItem) => {
+    const textToFill = `${item.category} ${item.name} ${formatAmountShort(item.amount)}`;
+    setInput(textToFill);
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  };
 
   const handleSend = async (textToSend?: string) => {
     const text = (textToSend || input).trim();
@@ -146,6 +236,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
         ]);
         if (data.recorded) {
           onTransactionAdded();
+          fetchFrequentItems();
         }
       } else {
         setMessages((prev) => [
@@ -285,18 +376,55 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Quick Chips Carousel */}
-            <div className="p-3 border-t border-slate-100 bg-white overflow-x-auto no-scrollbar flex gap-2">
-              {QUICK_SUGGESTIONS.map((s) => (
+            {/* Smart Hybrid Chips / Autocomplete */}
+            {showSuggestions && displayedChips.length > 0 && (
+              <div className="px-3 py-2 border-t border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2 animate-fade-in">
+                <div className="flex-1 overflow-x-auto no-scrollbar flex items-center gap-1.5 py-0.5">
+                  <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider shrink-0 select-none mr-0.5">
+                    {trimmedInput ? 'Saran:' : 'Sering:'}
+                  </span>
+                  {displayedChips.map((item) => (
+                    <button
+                      key={`${item.name}-${item.amount}`}
+                      type="button"
+                      onClick={() => handleChipClick(item)}
+                      className="inline-flex items-center gap-1 whitespace-nowrap text-xs bg-white hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 text-slate-700 border border-slate-200/80 px-2.5 py-1 rounded-full transition-all shrink-0 shadow-xs cursor-pointer group"
+                      title={`${item.category} | Sering diinput ${item.frequency}x (Klik untuk mengisi)`}
+                    >
+                      <span>{getCategoryEmoji(item.category)}</span>
+                      <span className="font-medium text-slate-700 group-hover:text-emerald-700">
+                        {item.name}
+                      </span>
+                      <span className="text-[11px] text-slate-400 group-hover:text-emerald-600 font-semibold">
+                        {formatAmountShort(item.amount)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+
                 <button
-                  key={s}
-                  onClick={() => handleSend(s)}
-                  className="whitespace-nowrap text-xs bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-600 px-3 py-1.5 rounded-full transition-colors shrink-0"
+                  type="button"
+                  onClick={() => setShowSuggestions(false)}
+                  className="p-1 rounded-lg text-slate-300 hover:text-slate-500 hover:bg-slate-200/60 transition-colors shrink-0"
+                  title="Sembunyikan saran"
                 >
-                  {s}
+                  <X className="w-3.5 h-3.5" />
                 </button>
-              ))}
-            </div>
+              </div>
+            )}
+
+            {/* Tombol Tampilkan Saran (jika sedang disembunyikan) */}
+            {!showSuggestions && frequentItems.length > 0 && (
+              <div className="px-3 pt-1.5 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowSuggestions(true)}
+                  className="text-[10px] text-slate-400 hover:text-emerald-600 flex items-center gap-1 transition-colors"
+                >
+                  <Sparkles className="w-3 h-3 text-emerald-500" /> Tampilkan saran favorit
+                </button>
+              </div>
+            )}
 
             {/* Speech Error Banner */}
             {speechError && (
@@ -415,15 +543,18 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
       <ReceiptScannerModal
         isOpen={isReceiptModalOpen}
         onClose={() => setIsReceiptModalOpen(false)}
+        initialSharedImage={sharedImage}
+        onClearSharedImage={() => setSharedImage(null)}
         onSuccess={() => {
           onTransactionAdded();
           refetchQuota();
+          fetchFrequentItems();
           setMessages((prev) => [
             ...prev,
             {
               id: Date.now().toString(),
               sender: 'bot',
-              text: '✅ Transaksi dari struk belanja kasir berhasil dicatat ke database!',
+              text: '✅ Transaksi dari struk / bukti QRIS berhasil dicatat ke database!',
               isSuccess: true
             }
           ]);

@@ -1,6 +1,6 @@
 ---
 name: openspec-archive-change
-description: Archive a completed change in the experimental workflow. Use when the user wants to finalize and archive a change after implementation is complete.
+description: Finalize and sync a change to main specs. Deletes the change directly if all tasks are complete, or retains it in changes/ if tasks remain incomplete.
 allowed-tools: Bash(openspec:*)
 license: MIT
 compatibility: Requires openspec CLI.
@@ -10,7 +10,7 @@ metadata:
   generatedBy: "1.12.0"
 ---
 
-Archive a completed change in the experimental workflow.
+Finalize and sync a change to main specs, then delete directly if complete or retain in changes/ if incomplete.
 
 **Store selection:** If the user names a store (a store is a standalone OpenSpec repo registered on this machine) or the work lives in one, run `openspec store list --json` to discover registered store ids, then pass `--store <id>` on the commands that read or write specs and changes (`new change`, `status`, `instructions`, `list`, `show`, `validate`, `archive`, `doctor`, `context`, `schemas`, `view`). Once selected, treat `--store <id>` as sticky for the rest of the workflow. Every unscoped example of those commands below is shorthand: before running it, append the flag. For example, run `openspec status --change "<name>" --json --store "<id>"`, not the unscoped form shown below. Other commands do not take the flag. Hints printed by commands already carry the flag; keep it on follow-ups. Without a store, commands act on the nearest local `openspec/` root.
 
@@ -79,12 +79,14 @@ Archive a completed change in the experimental workflow.
 
    Count tasks marked with `- [ ]` (incomplete) vs `- [x]` (complete).
 
-   **If incomplete tasks found:**
-   - Display warning showing count of incomplete tasks
-   - Ask the user to confirm they want to proceed
-   - Proceed if user confirms
+   Task completion directly governs step 5:
+   - **All tasks complete (`- [ ]` count is 0):** The change directory will be deleted directly after specs are synced (no archive folder used).
+   - **Incomplete tasks found (`- [ ]` count > 0):** The change directory will be **retained** in `<planningHome.changesDir>/<name>` so unfinished work can continue. Delta specs will still be synced to main specs.
+     - Display notice showing count of incomplete tasks: "Found <N> incomplete tasks. Delta specs will be synced, but the change directory will be retained in `openspec/changes/<name>`."
+     - Ask the user to confirm they want to proceed with syncing and retaining.
+     - Proceed if user confirms.
 
-   **If no tasks file exists:** Proceed without task-related warning.
+   **If no tasks file exists:** Treat as complete if all artifacts are done/skipped.
 
 4. **Assess delta spec sync state**
 
@@ -99,25 +101,25 @@ Archive a completed change in the experimental workflow.
    - Show a combined summary before prompting
 
    **Prompt options:**
-   - If changes needed: "Sync now (recommended)", "Archive without syncing"
-   - If already synced: "Archive now", "Sync anyway", "Cancel"
+   - If changes needed: "Sync now (recommended)", "Skip sync"
+   - If already synced: "Proceed", "Sync anyway", "Cancel"
 
    Route on the answer:
-   - "Cancel" — stop, do not archive
-   - "Archive without syncing" or "Archive now" — proceed to archive
+   - "Cancel" — stop, do not proceed
+   - "Skip sync" or "Proceed" — proceed to step 5
    - "Sync now" or "Sync anyway" — sync, then verify (below)
-   - Anything else — ask again rather than archiving
+   - Anything else — ask again rather than proceeding
 
    Before a selected sync writes any main spec, run
    `openspec instructions specs --change "<name>" --json` once with the same
    selected-root flags. Require a zero exit status and valid artifact-instruction
    JSON. If the lookup fails or returns invalid JSON, report the error and stop
-   before writing any main spec or moving the change. A valid response with omitted
+   before writing any main spec or deleting the change. A valid response with omitted
    `rules` is the no-rules case. Apply returned `rules` only to the content and
    form of main specs produced by this merge; do not use them as archive guidance,
    change CLI behavior, or copy the rule text into any output file.
 
-   Then run the `openspec-sync-specs` workflow inline (agent-driven intelligent merge) for change '<name>', passing the delta spec analysis and the fetched specs-rule snapshot from above, and wait for it to finish. The inline sync must reuse that snapshot without fetching `specs` instructions again. Do not delegate it to a background task — step 5 would move `changeRoot` out from under a sync that is still reading it, leaving the change archived and the main specs never updated. If your agent can only run it by delegation, delegate synchronously and wait for the result.
+   Then run the `openspec-sync-specs` workflow inline (agent-driven intelligent merge) for change '<name>', passing the delta spec analysis and the fetched specs-rule snapshot from above, and wait for it to finish. The inline sync must reuse that snapshot without fetching `specs` instructions again. Do not delegate it to a background task — step 5 would delete `changeRoot` out from under a sync that is still reading it, leaving the change removed and the main specs never updated. If your agent can only run it by delegation, delegate synchronously and wait for the result.
 
    Then re-run the comparison from the top of this step against every capability that has a delta spec in `artifactPaths.specs.existingOutputPaths` — not only the ones the sync reports it touched. A successful sync leaves nothing left to apply, so each capability must now read as already synced:
    - ADDED requirements present
@@ -125,55 +127,66 @@ Archive a completed change in the experimental workflow.
    - REMOVED requirements gone — and where this sync retired a capability (removed its last requirement, leaving `## Requirements` empty), its main spec deleted rather than left empty; a spec the sync deliberately kept and reported is also a match
    - RENAMED requirements present under the new name and absent under the old one
 
-   If the sync failed, or any capability does not match, report what differs and stop — do not archive. Nothing has moved and `changeRoot` is intact, so the user can fix the mismatch or re-run the sync and start the archive again.
+   If the sync failed, or any capability does not match, report what differs and stop — do not clean up or delete. Nothing has moved and `changeRoot` is intact, so the user can fix the mismatch or re-run the sync and start again.
 
-5. **Perform the archive**
+5. **Perform cleanup or retention**
 
-   Create an `archive` directory under `planningHome.changesDir` if it doesn't exist:
-   ```bash
-   mkdir -p "<planningHome.changesDir>/archive"
-   ```
+   Check task and artifact completion status:
 
-   Generate the target name: use the change name as-is when it already starts with a `YYYY-MM-DD-` prefix; otherwise prepend the current date as `YYYY-MM-DD-<change-name>`. Never stack a second date (same rule as `openspec archive`).
+   - **If all tasks are complete (`- [ ]` count is 0) and artifacts are done or skipped:**
+     Delete the change directory directly without creating or using an archive directory:
+     ```bash
+     rm -rf "<changeRoot>"
+     ```
+     (On Windows PowerShell: `Remove-Item -Recurse -Force "<changeRoot>"`)
 
-   **Check if target already exists:**
-   - If yes: Fail with error, suggest renaming existing archive or using different date
-   - If no: Move `changeRoot` to the archive directory
-
-   ```bash
-   mv "<changeRoot>" "<planningHome.changesDir>/archive/<target-name>"
-   ```
+   - **If incomplete tasks exist (`- [ ]` count > 0) or artifacts are incomplete:**
+     Do NOT delete or archive the change directory. Keep it intact in `<planningHome.changesDir>/<name>` so the remaining work can continue.
 
 6. **Display summary**
 
-   Show archive completion summary including:
+   Show completion summary including:
    - Change name
    - Schema that was used
-   - Archive location
+   - Status (Deleted or Retained)
    - Whether specs were synced (if applicable)
-   - Note about any warnings (incomplete artifacts/tasks)
+   - Remaining tasks count (if retained)
 
-**Output On Success**
+**Output On Success (All Tasks Complete - Deleted)**
 
 ```markdown
-## Archive Complete
+## Change Complete & Deleted
 
 **Change:** <change-name>
 **Schema:** <schema-name>
-**Archived to:** the archive path derived from `planningHome.changesDir`/<target-name>/
+**Status:** Deleted (all tasks complete, specs synced)
 **Specs:** <"✓ Synced to main specs" only if the step 4 verification passed; otherwise "No delta specs" or "Sync skipped">
 
-<"All artifacts complete. All tasks complete." — or, if archived with warnings, list them instead (e.g. "Archived with 2 incomplete tasks")>
+All artifacts complete. All tasks complete. Change directory removed.
+```
+
+**Output When Incomplete (Specs Synced - Retained)**
+
+```markdown
+## Specs Synced (Change Retained)
+
+**Change:** <change-name>
+**Schema:** <schema-name>
+**Status:** Retained in changes/ (<N> tasks remaining)
+**Specs:** <"✓ Synced to main specs" only if the step 4 verification passed; otherwise "No delta specs" or "Sync skipped">
+
+**Remaining Tasks:** <N> tasks left incomplete.
+Change directory kept at `<planningHome.changesDir>/<name>` to continue work.
 ```
 
 **Guardrails**
 - Announce the selected change; prompt for selection when it is ambiguous
 - Use artifact graph (openspec status --json) for completion checking
-- Don't block archive on warnings - just inform and confirm
-- Preserve .openspec.yaml when moving to archive (it moves with the directory)
+- Do NOT use an archive directory: complete changes are deleted directly, incomplete changes are retained in changes/
+- Never delete a change that still has incomplete tasks
 - Show clear summary of what happened
 - If sync is requested, run the `openspec-sync-specs` workflow inline (agent-driven)
-- Never archive while a spec sync is still in flight — run the sync inline and verify the main specs before moving `changeRoot`
+- Never delete `changeRoot` while a spec sync is still in flight — run the sync inline and verify the main specs before removing `changeRoot`
 - If delta specs exist, always run the sync assessment and show the combined summary before prompting
 - Apply relevant runtime context and report conflicts; operation guidance remains advisory
 - Consider every guidance entry and explain any inapplicable or conflicting advice

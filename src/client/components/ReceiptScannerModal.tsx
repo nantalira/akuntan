@@ -10,20 +10,42 @@ import {
   Store,
   Tag,
   Upload,
+  Wallet,
   X
 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReceiptExtractedData } from '../../server/routes/scanReceipt';
+import { getAuthHeaders } from '../api';
 
 interface ReceiptScannerModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
+  initialSharedImage?: string | null;
+  onClearSharedImage?: () => void;
 }
 
 const CATEGORIES = ['Makan', 'Jajan', 'Primer', 'Motor', 'Olga', 'Belanja'] as const;
+const PAYMENT_METHODS = [
+  'QRIS',
+  'Cash',
+  'BCA',
+  'Mandiri',
+  'BRI',
+  'BNI',
+  'GoPay',
+  'OVO',
+  'DANA',
+  'ShopeePay'
+] as const;
 
-export function ReceiptScannerModal({ isOpen, onClose, onSuccess }: ReceiptScannerModalProps) {
+export function ReceiptScannerModal({
+  isOpen,
+  onClose,
+  onSuccess,
+  initialSharedImage,
+  onClearSharedImage
+}: ReceiptScannerModalProps) {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,15 +56,15 @@ export function ReceiptScannerModal({ isOpen, onClose, onSuccess }: ReceiptScann
   const [merchant, setMerchant] = useState('');
   const [amount, setAmount] = useState<number | string>('');
   const [category, setCategory] = useState<(typeof CATEGORIES)[number]>('Belanja');
+  const [paymentMethod, setPaymentMethod] = useState<string>('QRIS');
+  const [txSource, setTxSource] = useState<'ai' | 'share_target'>('ai');
   const [date, setDate] = useState('');
   const [notes, setNotes] = useState('');
 
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
-  if (!isOpen) return null;
-
-  const resetState = () => {
+  const resetState = useCallback(() => {
     setImagePreview(null);
     setLoading(false);
     setError(null);
@@ -50,30 +72,32 @@ export function ReceiptScannerModal({ isOpen, onClose, onSuccess }: ReceiptScann
     setMerchant('');
     setAmount('');
     setCategory('Belanja');
+    setPaymentMethod('QRIS');
+    setTxSource('ai');
     setDate('');
     setNotes('');
-  };
+  }, []);
 
   const handleClose = () => {
     resetState();
+    onClearSharedImage?.();
     onClose();
   };
 
-  // Compress image on canvas to max 1280px to ensure fast upload
-  const processImageFile = async (file: File) => {
-    setError(null);
-    setLoading(true);
+  const scanBase64DataUrl = useCallback(
+    async (rawBase64: string, sourceType: 'ai' | 'share_target' = 'ai') => {
+      setError(null);
+      setLoading(true);
+      setImagePreview(rawBase64);
+      setTxSource(sourceType);
+      if (sourceType === 'share_target') {
+        setPaymentMethod('QRIS');
+      }
 
-    try {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const rawBase64 = e.target?.result as string;
-        setImagePreview(rawBase64);
-
-        // Compress using an offscreen image & canvas
-        const img = new Image();
-        img.src = rawBase64;
-        img.onload = async () => {
+      const img = new Image();
+      img.src = rawBase64;
+      img.onload = async () => {
+        try {
           const maxDim = 1280;
           let width = img.width;
           let height = img.height;
@@ -97,40 +121,62 @@ export function ReceiptScannerModal({ isOpen, onClose, onSuccess }: ReceiptScann
 
           const compressedBase64 = canvas.toDataURL('image/jpeg', 0.85);
 
-          // Call API
-          try {
-            const res = await fetch('/api/scan-receipt', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                imageBase64: compressedBase64,
-                mimeType: 'image/jpeg'
-              })
-            });
+          const res = await fetch('/api/scan-receipt', {
+            method: 'POST',
+            headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+            credentials: 'include',
+            body: JSON.stringify({
+              imageBase64: compressedBase64,
+              mimeType: 'image/jpeg'
+            })
+          });
 
-            const json = await res.json<{
-              success: boolean;
-              data?: ReceiptExtractedData;
-              error?: string;
-            }>();
+          const json = await res.json<{
+            success: boolean;
+            data?: ReceiptExtractedData;
+            error?: string;
+          }>();
 
-            if (!json.success || !json.data) {
-              throw new Error(json.error || 'Gagal membaca isi struk kasir');
-            }
-
-            const data = json.data;
-            setExtractedData(data);
-            setMerchant(data.merchant);
-            setAmount(data.amount);
-            setCategory(data.category);
-            setDate(data.date);
-            setNotes(data.notes);
-          } catch (apiErr) {
-            setError(apiErr instanceof Error ? apiErr.message : 'Koneksi ke Gemini Vision gagal');
-          } finally {
-            setLoading(false);
+          if (!json.success || !json.data) {
+            throw new Error(json.error || 'Gagal membaca isi struk / bukti QRIS');
           }
-        };
+
+          const data = json.data;
+          setExtractedData(data);
+          setMerchant(data.merchant);
+          setAmount(data.amount);
+          setCategory(data.category);
+          setDate(data.date);
+          setNotes(data.notes);
+        } catch (apiErr) {
+          setError(apiErr instanceof Error ? apiErr.message : 'Koneksi ke Gemini Vision gagal');
+        } finally {
+          setLoading(false);
+        }
+      };
+      img.onerror = () => {
+        setError('Gagal memuat pratinjau gambar struk');
+        setLoading(false);
+      };
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (isOpen && initialSharedImage) {
+      scanBase64DataUrl(initialSharedImage, 'share_target');
+    }
+  }, [isOpen, initialSharedImage, scanBase64DataUrl]);
+
+  if (!isOpen) return null;
+
+  // Compress image on canvas to max 1280px to ensure fast upload
+  const processImageFile = async (file: File) => {
+    try {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const rawBase64 = e.target?.result as string;
+        await scanBase64DataUrl(rawBase64, 'ai');
       };
       reader.readAsDataURL(file);
     } catch (err) {
@@ -164,15 +210,17 @@ export function ReceiptScannerModal({ isOpen, onClose, onSuccess }: ReceiptScann
     try {
       const res = await fetch('/api/transactions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        credentials: 'include',
         body: JSON.stringify({
           name: merchant.trim(),
           amount: numAmount,
           category,
+          paymentMethod,
           date: date || new Date().toISOString().split('T')[0],
           time: extractedData?.time || new Date().toTimeString().split(' ')[0],
           notes: notes.trim(),
-          source: 'ai'
+          source: txSource
         })
       });
 
@@ -390,22 +438,45 @@ export function ReceiptScannerModal({ isOpen, onClose, onSuccess }: ReceiptScann
                 </div>
               </div>
 
-              {/* Form Input: Tanggal */}
-              <div className="space-y-1.5">
-                <label
-                  htmlFor="receipt-date"
-                  className="text-xs font-semibold text-gray-700 flex items-center gap-1.5"
-                >
-                  <Calendar className="w-3.5 h-3.5 text-gray-400" /> Tanggal Transaksi
-                </label>
-                <input
-                  id="receipt-date"
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="w-full px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-                  required
-                />
+              {/* Form Input: Metode Pembayaran & Tanggal */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="receipt-payment-method"
+                    className="text-xs font-semibold text-gray-700 flex items-center gap-1.5"
+                  >
+                    <Wallet className="w-3.5 h-3.5 text-gray-400" /> Metode Pembayaran
+                  </label>
+                  <select
+                    id="receipt-payment-method"
+                    value={paymentMethod}
+                    onChange={(e) => setPaymentMethod(e.target.value)}
+                    className="w-full px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+                  >
+                    {PAYMENT_METHODS.map((pm) => (
+                      <option key={pm} value={pm}>
+                        {pm}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="receipt-date"
+                    className="text-xs font-semibold text-gray-700 flex items-center gap-1.5"
+                  >
+                    <Calendar className="w-3.5 h-3.5 text-gray-400" /> Tanggal Transaksi
+                  </label>
+                  <input
+                    id="receipt-date"
+                    type="date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="w-full px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+                    required
+                  />
+                </div>
               </div>
 
               {/* Form Input: Rincian Barang / Notes */}
