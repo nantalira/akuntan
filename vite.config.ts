@@ -16,6 +16,9 @@ export default defineConfig({
         'pwa-512x512.png',
         'maskable-icon-512x512.png'
       ],
+      workbox: {
+        navigateFallbackDenylist: [/^\/api\//]
+      },
       manifest: {
         name: 'Akuntan AI - Asisten Keuangan Pribadi',
         short_name: 'Akuntan AI',
