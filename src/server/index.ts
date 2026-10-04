@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { authMiddleware } from './middleware/auth';
@@ -19,6 +20,7 @@ export type Bindings = {
   APP_PASSCODE?: string;
   AI_DAILY_LIMIT?: string;
   JWT_SECRET?: string;
+  ASSETS?: Fetcher;
 };
 
 export type Variables = {
@@ -59,13 +61,9 @@ app.post('/api/share-target', async (c) => {
     if (receipt && typeof receipt === 'object' && 'arrayBuffer' in receipt) {
       const fileObj = receipt as File;
       const buffer = await fileObj.arrayBuffer();
-      const bytes = new Uint8Array(buffer);
-      let binary = '';
-      for (let i = 0; i < bytes.byteLength; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
       const mimeType = fileObj.type || 'image/jpeg';
-      imageBase64 = `data:${mimeType};base64,${btoa(binary)}`;
+      const b64 = Buffer.from(buffer).toString('base64');
+      imageBase64 = `data:${mimeType};base64,${b64}`;
     }
 
     const payloadJson = JSON.stringify({
@@ -87,7 +85,11 @@ app.post('/api/share-target', async (c) => {
     <script>
       try {
         localStorage.setItem('akuntan_shared_receipt', ${JSON.stringify(payloadJson)});
-      } catch (e) {}
+      } catch (e) {
+        try {
+          sessionStorage.setItem('akuntan_shared_receipt', ${JSON.stringify(payloadJson)});
+        } catch (_err) {}
+      }
       window.location.replace('/?shared_receipt=1');
     </script>
   </div>
@@ -127,6 +129,14 @@ const apiRoutes = app
   .route('/api/debts', debtsRoute)
   .route('/api/budgets', budgetsRoute)
   .route('/api/export', exportRoute);
+
+// Fallback for static assets and client-side PWA routing
+app.all('*', (c) => {
+  if (c.env.ASSETS) {
+    return c.env.ASSETS.fetch(c.req.raw);
+  }
+  return c.text('Not found', 404);
+});
 
 export type AppType = typeof apiRoutes;
 export default app;

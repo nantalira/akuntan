@@ -76,9 +76,12 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
 
   useEffect(() => {
     try {
-      const rawShared = localStorage.getItem('akuntan_shared_receipt');
+      const rawShared =
+        localStorage.getItem('akuntan_shared_receipt') ||
+        sessionStorage.getItem('akuntan_shared_receipt');
       if (rawShared) {
         localStorage.removeItem('akuntan_shared_receipt');
+        sessionStorage.removeItem('akuntan_shared_receipt');
         if (window.location.search.includes('shared_receipt=1')) {
           window.history.replaceState({}, '', window.location.pathname);
         }

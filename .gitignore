@@ -8,6 +8,7 @@ dist/
 # Cloudflare Wrangler local state & SQLite D1 data
 .wrangler/
 .dev.vars
+.agents/
 
 # Environment secrets & API keys
 .env
