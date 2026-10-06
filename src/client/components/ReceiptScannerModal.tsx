@@ -6,6 +6,7 @@ import {
   DollarSign,
   FileText,
   RefreshCw,
+  Smartphone,
   Sparkles,
   Store,
   Tag,
@@ -57,7 +58,9 @@ export function ReceiptScannerModal({
   const [amount, setAmount] = useState<number | string>('');
   const [category, setCategory] = useState<(typeof CATEGORIES)[number]>('Belanja');
   const [paymentMethod, setPaymentMethod] = useState<string>('QRIS');
-  const [txSource, setTxSource] = useState<'ai' | 'share_target'>('ai');
+  const [txSource, setTxSource] = useState<'ai' | 'share_target'>(() =>
+    initialSharedImage ? 'share_target' : 'ai'
+  );
   const [date, setDate] = useState('');
   const [notes, setNotes] = useState('');
 
@@ -245,17 +248,25 @@ export function ReceiptScannerModal({
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-emerald-50 via-teal-50 to-white">
           <div className="flex items-center gap-2">
             <div className="p-2 bg-emerald-500 text-white rounded-xl shadow-sm">
-              <Camera className="w-5 h-5" />
+              {txSource === 'share_target' ? (
+                <Smartphone className="w-5 h-5" />
+              ) : (
+                <Camera className="w-5 h-5" />
+              )}
             </div>
             <div>
               <h3 className="font-semibold text-gray-900 text-base flex items-center gap-1.5">
-                Scan Struk Kasir (OCR)
+                {txSource === 'share_target'
+                  ? 'Konfirmasi Bukti Pembayaran'
+                  : 'Scan Struk Kasir (OCR)'}
                 <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
                   <Sparkles className="w-3 h-3" /> Gemini 3.8
                 </span>
               </h3>
               <p className="text-xs text-gray-500">
-                Pindai foto struk belanjaan fisik secara otomatis
+                {txSource === 'share_target'
+                  ? 'Periksa dan sesuaikan rincian transaksi sebelum dicatat'
+                  : 'Pindai foto struk belanjaan fisik secara otomatis'}
               </p>
             </div>
           </div>
@@ -294,7 +305,7 @@ export function ReceiptScannerModal({
             onChange={handleFileChange}
           />
 
-          {!imagePreview && (
+          {!imagePreview && txSource !== 'share_target' && (
             <div className="py-6 flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-2xl bg-gray-50/50 hover:bg-emerald-50/30 transition-colors">
               <div className="w-16 h-16 bg-white rounded-2xl shadow-sm border border-gray-200 flex items-center justify-center text-emerald-600 mb-3">
                 <Camera className="w-8 h-8" />
@@ -340,10 +351,14 @@ export function ReceiptScannerModal({
               <div className="text-center space-y-1">
                 <p className="text-sm font-semibold text-gray-800 flex items-center justify-center gap-2">
                   <RefreshCw className="w-4 h-4 text-emerald-600 animate-spin" />
-                  Membaca struk kasir dengan AI...
+                  {txSource === 'share_target'
+                    ? 'Membaca bukti pembayaran dengan AI...'
+                    : 'Membaca struk kasir dengan AI...'}
                 </p>
                 <p className="text-xs text-gray-400">
-                  Gemini sedang mengekstrak total belanja dan daftar barang
+                  {txSource === 'share_target'
+                    ? 'Gemini sedang mengekstrak penerima, nominal, dan tanggal'
+                    : 'Gemini sedang mengekstrak total belanja dan daftar barang'}
                 </p>
               </div>
             </div>
@@ -352,11 +367,38 @@ export function ReceiptScannerModal({
           {/* Confirmation Form after OCR Extraction */}
           {extractedData && !loading && (
             <form onSubmit={handleSaveTransaction} className="space-y-4">
+              {/* Receipt / Proof Thumbnail Preview */}
+              {imagePreview && (
+                <div className="flex items-center gap-3 p-2.5 bg-slate-50 border border-slate-200/80 rounded-xl">
+                  <div className="w-12 h-14 rounded-lg overflow-hidden border border-slate-200 shrink-0 bg-black/5">
+                    <img
+                      src={imagePreview}
+                      alt="Bukti Transaksi"
+                      className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
+                      onClick={() => window.open(imagePreview, '_blank')}
+                      title="Klik untuk membuka foto bukti"
+                    />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-slate-800 truncate">
+                      {merchant || (txSource === 'share_target' ? 'Bukti QRIS' : 'Foto Struk')}
+                    </p>
+                    <p className="text-[11px] text-slate-500">
+                      {txSource === 'share_target'
+                        ? 'Periksa kesesuaian rincian sebelum menyetujui'
+                        : 'Hasil pemindaian struk fisik'}
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center justify-between p-3 bg-emerald-50/70 border border-emerald-100 rounded-xl">
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                   <span className="text-xs font-semibold text-emerald-800">
-                    Struk Berhasil Dibaca!
+                    {txSource === 'share_target'
+                      ? 'Bukti Bayar Berhasil Dibaca!'
+                      : 'Struk Berhasil Dibaca!'}
                   </span>
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-emerald-700 border border-emerald-200">
                     Akurasi:{' '}
@@ -367,13 +409,15 @@ export function ReceiptScannerModal({
                         : 'Rendah'}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => cameraInputRef.current?.click()}
-                  className="text-xs text-emerald-700 hover:text-emerald-900 font-medium flex items-center gap-1"
-                >
-                  <RefreshCw className="w-3 h-3" /> Foto Ulang
-                </button>
+                {txSource !== 'share_target' && (
+                  <button
+                    type="button"
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="text-xs text-emerald-700 hover:text-emerald-900 font-medium flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" /> Foto Ulang
+                  </button>
+                )}
               </div>
 
               {/* Form Input: Merchant / Toko */}
@@ -515,6 +559,8 @@ export function ReceiptScannerModal({
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" /> Menyimpan...
                     </>
+                  ) : txSource === 'share_target' ? (
+                    '✅ Sudah Sesuai, Catat'
                   ) : (
                     'Simpan Transaksi'
                   )}

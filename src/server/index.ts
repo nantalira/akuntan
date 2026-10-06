@@ -51,19 +51,61 @@ app.get('/api/health', (c) => {
 
 // PWA Web Share Target endpoint ("Bagikan -> Akuntan AI")
 app.post('/api/share-target', async (c) => {
+  console.log('[Share-Target] Incoming Web Share Target request');
   try {
-    const body = await c.req.parseBody();
-    const title = typeof body.title === 'string' ? body.title : '';
-    const text = typeof body.text === 'string' ? body.text : '';
-    const receipt = body.receipt;
+    let fileObj: File | null = null;
+    let title = '';
+    let text = '';
+
+    // 1. Extract from multipart FormData
+    try {
+      const formData = await c.req.formData();
+      for (const [key, val] of formData.entries()) {
+        if (val && typeof val === 'object' && 'arrayBuffer' in val && (val as File).size > 0) {
+          if (!fileObj) {
+            fileObj = val as File;
+            console.log(
+              `[Share-Target] Found file in "${key}": ${fileObj.name} (${fileObj.type}, ${fileObj.size} bytes)`
+            );
+          }
+        } else if (typeof val === 'string' && val.trim()) {
+          if (key === 'title') title = val.trim();
+          else if (key === 'text') text = text ? `${text} - ${val.trim()}` : val.trim();
+          else if (key === 'url') text = text ? `${text} ${val.trim()}` : val.trim();
+          else text = text ? `${text} - ${val.trim()}` : val.trim();
+        }
+      }
+    } catch (formErr) {
+      console.warn(
+        '[Share-Target] formData() parsing error, falling back to parseBody():',
+        formErr
+      );
+      const body = await c.req.parseBody({ all: true });
+      for (const [key, val] of Object.entries(body)) {
+        if (val && typeof val === 'object' && 'arrayBuffer' in val && (val as File).size > 0) {
+          if (!fileObj) fileObj = val as File;
+        } else if (
+          Array.isArray(val) &&
+          val.length > 0 &&
+          typeof val[0] === 'object' &&
+          'arrayBuffer' in val[0]
+        ) {
+          if (!fileObj) fileObj = val[0] as File;
+        } else if (typeof val === 'string' && val.trim()) {
+          if (key === 'title') title = val.trim();
+          else if (key === 'text') text = text ? `${text} - ${val.trim()}` : val.trim();
+          else if (key === 'url') text = text ? `${text} ${val.trim()}` : val.trim();
+        }
+      }
+    }
 
     let imageBase64 = '';
-    if (receipt && typeof receipt === 'object' && 'arrayBuffer' in receipt) {
-      const fileObj = receipt as File;
+    if (fileObj) {
       const buffer = await fileObj.arrayBuffer();
       const mimeType = fileObj.type || 'image/jpeg';
       const b64 = Buffer.from(buffer).toString('base64');
       imageBase64 = `data:${mimeType};base64,${b64}`;
+      console.log(`[Share-Target] Converted receipt to base64, size: ${b64.length} chars`);
     }
 
     const payloadJson = JSON.stringify({
@@ -72,31 +114,67 @@ app.post('/api/share-target', async (c) => {
       text: text || undefined
     });
 
+    console.log(
+      `[Share-Target] Preparing transition HTML, payload size: ${payloadJson.length} bytes`
+    );
+
     return c.html(`<!DOCTYPE html>
 <html lang="id">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Memproses Bukti QRIS...</title>
+  <title>Menerima Bukti QRIS...</title>
 </head>
 <body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc;color:#0f172a;">
-  <div style="text-align:center;">
-    <p style="font-weight:600;">📲 Menerima Bukti Pembayaran QRIS...</p>
+  <div style="text-align:center;padding:20px;">
+    <div style="font-size:36px;margin-bottom:12px;">📲</div>
+    <p style="font-weight:700;font-size:16px;margin:0 0 8px 0;">Menerima Bukti Pembayaran QRIS...</p>
+    <p style="color:#64748b;font-size:13px;margin:0;">Membuka Akuntan AI...</p>
     <script>
-      try {
-        localStorage.setItem('akuntan_shared_receipt', ${JSON.stringify(payloadJson)});
-      } catch (e) {
+      (function() {
+        var rawPayload = ${JSON.stringify(payloadJson)};
+
+        // 1. Fallback sync storage (for smaller text / low-res)
+        try { localStorage.setItem('akuntan_shared_receipt', rawPayload); } catch (e) {}
+        try { sessionStorage.setItem('akuntan_shared_receipt', rawPayload); } catch (e) {}
+
+        function redirect() {
+          window.location.replace('/?shared_receipt=1');
+        }
+
+        // 2. Primary reliable storage: IndexedDB (handles large images without 5MB quota limits)
         try {
-          sessionStorage.setItem('akuntan_shared_receipt', ${JSON.stringify(payloadJson)});
-        } catch (_err) {}
-      }
-      window.location.replace('/?shared_receipt=1');
+          var req = indexedDB.open('akuntan_share_db', 1);
+          req.onupgradeneeded = function(e) {
+            var db = e.target.result;
+            if (!db.objectStoreNames.contains('shares')) {
+              db.createObjectStore('shares', { keyPath: 'id' });
+            }
+          };
+          req.onsuccess = function(e) {
+            try {
+              var db = e.target.result;
+              var tx = db.transaction('shares', 'readwrite');
+              tx.objectStore('shares').put({ id: 'latest', payload: JSON.parse(rawPayload), timestamp: Date.now() });
+              tx.oncomplete = function() { redirect(); };
+              tx.onerror = function() { redirect(); };
+            } catch (err) {
+              redirect();
+            }
+          };
+          req.onerror = function() { redirect(); };
+          setTimeout(redirect, 1200);
+        } catch (e) {
+          redirect();
+        }
+      })();
     </script>
   </div>
 </body>
 </html>`);
-  } catch {
-    return c.redirect('/');
+  } catch (err) {
+    console.error('[Share-Target] Unhandled error in share-target:', err);
+    return c.redirect('/?shared_receipt=1');
   }
 });
 

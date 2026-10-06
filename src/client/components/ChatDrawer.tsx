@@ -61,6 +61,97 @@ const formatAmountShort = (amount: number) => {
   return String(amount);
 };
 
+interface SharedReceiptPayload {
+  imageBase64?: string;
+  text?: string;
+  title?: string;
+}
+
+const getSharedReceiptPayload = async (): Promise<SharedReceiptPayload | null> => {
+  // 1. Try synchronous localStorage
+  try {
+    const raw = localStorage.getItem('akuntan_shared_receipt');
+    if (raw) {
+      localStorage.removeItem('akuntan_shared_receipt');
+      return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    }
+  } catch (e) {
+    console.warn('[PWA Share] localStorage read error:', e);
+  }
+
+  // 2. Try synchronous sessionStorage
+  try {
+    const raw = sessionStorage.getItem('akuntan_shared_receipt');
+    if (raw) {
+      sessionStorage.removeItem('akuntan_shared_receipt');
+      return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    }
+  } catch (e) {
+    console.warn('[PWA Share] sessionStorage read error:', e);
+  }
+
+  // 3. Try IndexedDB (handles multi-MB image payloads without 5MB quota limit)
+  if (typeof indexedDB !== 'undefined') {
+    try {
+      const dbPayload = await new Promise<SharedReceiptPayload | null>((resolve) => {
+        const timeout = setTimeout(() => resolve(null), 800);
+        const req = indexedDB.open('akuntan_share_db', 1);
+
+        req.onupgradeneeded = (e) => {
+          const db = (e.target as IDBOpenDBRequest).result;
+          if (!db.objectStoreNames.contains('shares')) {
+            db.createObjectStore('shares', { keyPath: 'id' });
+          }
+        };
+
+        req.onsuccess = (e) => {
+          try {
+            const db = (e.target as IDBOpenDBRequest).result;
+            if (!db.objectStoreNames.contains('shares')) {
+              clearTimeout(timeout);
+              resolve(null);
+              return;
+            }
+            const tx = db.transaction('shares', 'readwrite');
+            const store = tx.objectStore('shares');
+            const getReq = store.get('latest');
+
+            getReq.onsuccess = () => {
+              clearTimeout(timeout);
+              const result = getReq.result;
+              if (result?.payload) {
+                store.delete('latest');
+                resolve(result.payload as SharedReceiptPayload);
+              } else {
+                resolve(null);
+              }
+            };
+
+            getReq.onerror = () => {
+              clearTimeout(timeout);
+              resolve(null);
+            };
+          } catch {
+            clearTimeout(timeout);
+            resolve(null);
+          }
+        };
+
+        req.onerror = () => {
+          clearTimeout(timeout);
+          resolve(null);
+        };
+      });
+
+      if (dbPayload) return dbPayload;
+    } catch (idbErr) {
+      console.warn('[PWA Share] IndexedDB read error:', idbErr);
+    }
+  }
+
+  return null;
+};
+
 export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
@@ -75,33 +166,56 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
   const [showSuggestions, setShowSuggestions] = useState(true);
 
   useEffect(() => {
-    try {
-      const rawShared =
-        localStorage.getItem('akuntan_shared_receipt') ||
-        sessionStorage.getItem('akuntan_shared_receipt');
-      if (rawShared) {
-        localStorage.removeItem('akuntan_shared_receipt');
-        sessionStorage.removeItem('akuntan_shared_receipt');
-        if (window.location.search.includes('shared_receipt=1')) {
-          window.history.replaceState({}, '', window.location.pathname);
+    let cancelled = false;
+    const isSharedUrl = window.location.search.includes('shared_receipt=1');
+
+    const processSharedReceipt = async () => {
+      // If shared_receipt=1 is in URL, allow a retry window (up to 3 attempts with 200ms delay)
+      let attempts = isSharedUrl ? 3 : 1;
+      let payload: SharedReceiptPayload | null = null;
+
+      while (attempts > 0 && !payload && !cancelled) {
+        payload = await getSharedReceiptPayload();
+        if (!payload && attempts > 1) {
+          await new Promise((r) => setTimeout(r, 200));
         }
-        const parsed = JSON.parse(rawShared) as {
-          imageBase64?: string;
-          text?: string;
-          title?: string;
-        };
-        if (parsed.imageBase64) {
-          setSharedImage(parsed.imageBase64);
+        attempts--;
+      }
+
+      if (cancelled) return;
+
+      if (isSharedUrl) {
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+
+      if (payload) {
+        console.log('[PWA Share] Received shared receipt payload:', {
+          hasImage: !!payload.imageBase64,
+          title: payload.title,
+          text: payload.text
+        });
+
+        if (payload.imageBase64) {
+          setSharedImage(payload.imageBase64);
           setIsReceiptModalOpen(true);
-        } else if (parsed.text || parsed.title) {
-          const combined = [parsed.title, parsed.text].filter(Boolean).join(' - ');
+        } else if (payload.text || payload.title) {
+          const combined = [payload.title, payload.text].filter(Boolean).join(' - ');
           setIsOpen(true);
           setInput(`QRIS ${combined}`);
         }
+      } else if (isSharedUrl) {
+        console.warn(
+          '[PWA Share] shared_receipt=1 detected but storage was empty. Opening scanner modal as fallback.'
+        );
+        setIsReceiptModalOpen(true);
       }
-    } catch (err) {
-      console.error('Failed to process shared receipt:', err);
-    }
+    };
+
+    processSharedReceipt();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const fetchFrequentItems = useCallback(async () => {

@@ -14,11 +14,19 @@ Sistem SHALL menyimpan informasi metode pembayaran (`payment_method`, contoh: `C
 - **THEN** sistem menyimpan transaksi dengan nilai `payment_method` yang sesuai (`QRIS` / `BCA`) dan menampilkan badge metode pembayaran di `TransactionList`
 
 ### Requirement: Zero-Setup PWA Web Share Target for QRIS Receipts
-Sistem SHALL mendaftarkan `share_target` pada manifest PWA (`manifest.webmanifest`) dengan method `POST` multipart/form-data dan menyediakan endpoint penerima `/api/share-target` sehingga pengguna yang meng-install PWA atau TWA dapat membagikan (*Share*) gambar atau teks bukti transaksi langsung dari aplikasi mobile banking ke Akuntan AI tanpa konfigurasi teknis.
+Sistem SHALL mendaftarkan `share_target` pada manifest PWA (`manifest.webmanifest`) dengan method `POST` multipart/form-data dan menyediakan endpoint penerima `/api/share-target` sehingga pengguna yang meng-install PWA atau TWA dapat membagikan (*Share*) gambar atau teks bukti transaksi langsung dari aplikasi mobile banking ke Akuntan AI, menampilkan modal persetujuan interaktif yang memungkinkan peninjauan serta pengeditan data sebelum disimpan ke buku kas.
 
 #### Scenario: User shares QRIS receipt image or text from banking app to Akuntan AI
 - **WHEN** pengguna menekan tombol **"Bagikan / Share"** pada layar bukti pembayaran QRIS di aplikasi bank/e-wallet lalu memilih **Akuntan AI**
-- **THEN** aplikasi membuka antarmuka pemrosesan bukti QRIS dengan gambar/teks yang dibagikan, mengekstrak nama merchant, nominal, kategori, serta `payment_method = 'QRIS'`, dan menyimpannya ke buku kas pengguna yang sedang login
+- **THEN** aplikasi membuka modal persetujuan bukti pembayaran dengan pratinjau gambar dan isian hasil ekstraksi AI (nama merchant, nominal, kategori, metode pembayaran default `QRIS`, dan tanggal), tanpa langsung menyimpannya secara otomatis ke database
+
+#### Scenario: User edits details and selects different payment method
+- **WHEN** pengguna meninjau modal persetujuan dan mengubah nominal, kategori, nama toko, atau mengganti metode pembayaran (misal ke `BCA`, `Mandiri`, `Cash`, atau `GoPay`)
+- **THEN** sistem memperbarui nilai formulir secara interaktif dan menyimpan transaksi sesuai data yang telah diedit saat pengguna menekan tombol **"✅ Sudah Sesuai, Catat"**
+
+#### Scenario: User cancels shared receipt approval
+- **WHEN** pengguna menekan tombol **"Batal"** atau tombol tutup pada modal persetujuan
+- **THEN** sistem menutup modal tanpa membuat catatan transaksi baru di database dan membersihkan payload sementara
 
 #### Scenario: Bypass Service Worker navigation fallback on share target POST
 - **WHEN** peramban mengirim navigasi POST multipart/form-data ke `/api/share-target`
