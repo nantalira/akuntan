@@ -30,6 +30,8 @@ export const transactions = sqliteTable(
     debtor: text('debtor'), // Kontak yang ditalangi pengguna (Terhutangi)
     creditor: text('creditor'), // Kontak yang menalangi pengguna (Menghutangi)
     debtAmount: integer('debt_amount').default(0),
+    isDebtSettled: integer('is_debt_settled').default(0).notNull(), // 0 = Belum Lunas, 1 = Lunas
+    debtSettledAt: text('debt_settled_at'), // Timestamp ISO saat dilunasi
     notes: text('notes'),
     paymentMethod: text('payment_method').default('Cash').notNull(), // Cash | QRIS | BCA | Mandiri | BRI | BNI | GoPay | OVO | DANA | ShopeePay | Transfer
     referenceId: text('reference_id'), // Bank/email reference ID for idempotent deduplication

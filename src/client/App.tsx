@@ -266,6 +266,8 @@ export default function App() {
             isLoading={isLoading}
             budgets={budgets}
             onSaveBudgets={handleSaveBudgets}
+            onNavigateToDebts={() => setActiveTab('debts')}
+            onRefresh={fetchData}
           />
         )}
 

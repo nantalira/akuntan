@@ -37,3 +37,41 @@ Sistem SHALL mendukung penentuan tanggal dan jam transaksi berdasarkan indikator
 #### Scenario: Default waktu saat ini jika tanpa keterangan waktu
 - **WHEN** pengguna memasukkan pesan "kopi 10rb jajan" tanpa menyebutkan waktu
 - **THEN** sistem menggunakan tanggal dan jam presisi saat transaksi dikirim
+
+### Requirement: Transaction Editing via Bottom Drawer
+Sistem SHALL menyediakan antarmuka penyuntingan transaksi lengkap berbasis Bottom Drawer yang dapat diakses melalui menu opsi transaksi pada riwayat transaksi. Antarmuka ini MUST mendukung pengubahan seluruh atribut transaksi mencakup nama, nominal, kategori, tanggal, jam, metode pembayaran, catatan tambahan, serta konfigurasi perhutangan.
+
+#### Scenario: Membuka Drawer Edit Transaksi
+- **WHEN** pengguna memilih opsi "Edit Transaksi" pada menu transaksi
+- **THEN** sistem membuka Bottom Drawer dengan seluruh formulir terisi data awal transaksi yang dipilih
+
+#### Scenario: Menyimpan Perubahan Transaksi
+- **WHEN** pengguna memperbarui atribut transaksi dan menekan tombol "Simpan Perubahan"
+- **THEN** sistem mengirim data pembaruan melalui permintaan HTTP PUT /api/transactions/:id, memperbarui catatan di database Cloudflare D1, menyegarkan data antarmuka, dan menutup Bottom Drawer
+
+#### Scenario: Rekonsiliasi Perubahan Talangan ke Tabel Hutang
+- **WHEN** pengguna mengubah status, kontak, atau nominal talangan pada transaksi yang diedit
+- **THEN** sistem merekonsiliasi saldo agregat hutang-piutang kontak lama dan kontak baru secara diferensial di tabel perhutangan
+
+### Requirement: Instant Transaction Inspection in AI Chat
+Sistem SHALL menyediakan tombol aksi langsung "Lihat Transaksi" pada balon respon sukses pencatatan AI di Chat Drawer, sehingga pengguna dapat langsung meninjau rincian lengkap atau mengedit transaksi yang baru saja dicatat tanpa berpindah ke halaman riwayat.
+
+#### Scenario: Menampilkan tombol Lihat Transaksi setelah pencatatan AI berhasil
+- **WHEN** pengguna berhasil mencatat pengeluaran melalui pesan teks santai di AI Chat Drawer
+- **THEN** sistem menyajikan tombol "Lihat Transaksi" di bagian bawah balon respon konfirmasi bot
+
+#### Scenario: Membuka detail transaksi dari AI Chat Drawer
+- **WHEN** pengguna menekan tombol "Lihat Transaksi" pada balon pesan AI
+- **THEN** sistem langsung membuka Bottom Drawer Edit Transaksi dengan data transaksi terkait yang siap ditinjau atau diubah
+
+### Requirement: Transaction History Presentation with Weekday and Actions Menu
+Sistem SHALL menyajikan riwayat transaksi dengan format tanggal yang menyertakan nama hari berbahasa Indonesia (contoh: "Selasa, 6 Okt 2026") dan tombol menu titik tiga vertikal (`⋮`) untuk membuka popup aksi Edit dan Hapus secara efisien tanpa memenuhi tampilan baris transaksi.
+
+#### Scenario: Menampilkan nama hari pada tanggal transaksi
+- **WHEN** pengguna melihat daftar riwayat transaksi
+- **THEN** sistem menampilkan tanggal setiap transaksi lengkap dengan nama hari berbahasa Indonesia (misal: "Selasa, 6 Okt 2026") beserta jam transaksi
+
+#### Scenario: Membuka popup menu aksi transaksi
+- **WHEN** pengguna mengklik tombol menu titik tiga (`⋮`) pada salah satu baris transaksi
+- **THEN** sistem membuka popup ringkas yang menampilkan opsi "Edit Transaksi" dan "Hapus"
+

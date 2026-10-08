@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb, schema } from '../../db/client';
 import type { AppEnv } from '../index';
+import { adjustDebt } from '../utils/debtHelper';
 
 const listTransactionsQuerySchema = z.object({
   month: z.string().optional(),
@@ -30,6 +31,22 @@ const createTransactionSchema = z.object({
   notes: z.string().optional(),
   paymentMethod: z.string().optional(),
   referenceId: z.string().optional(),
+  source: z.string().optional()
+});
+
+const updateTransactionSchema = z.object({
+  name: z.string().min(1, 'Nama transaksi wajib diisi').optional(),
+  amount: z.number().positive('Nominal harus lebih dari 0').optional(),
+  date: z.string().min(1, 'Tanggal wajib diisi').optional(),
+  time: z.string().optional(),
+  category: z.string().min(1, 'Kategori wajib diisi').optional(),
+  debtor: z.string().nullable().optional(),
+  creditor: z.string().nullable().optional(),
+  debtAmount: z.number().nonnegative().nullable().optional(),
+  isDebtSettled: z.number().int().min(0).max(1).optional(),
+  notes: z.string().nullable().optional(),
+  paymentMethod: z.string().optional(),
+  referenceId: z.string().nullable().optional(),
   source: z.string().optional()
 });
 
@@ -143,56 +160,98 @@ export const transactionsRoute = new Hono<AppEnv>()
     );
 
     // Update debts table if debtor or creditor is specified (scoped per userId)
-    if (body.debtor && body.debtAmount) {
-      const contact = body.debtor.trim().toUpperCase();
-      const existing = await db
-        .select()
-        .from(schema.debts)
-        .where(and(eq(schema.debts.userId, userId), eq(schema.debts.contactName, contact)))
-        .get();
-      if (existing) {
-        await db
-          .update(schema.debts)
-          .set({
-            totalOwedToUs: existing.totalOwedToUs + body.debtAmount,
-            updatedAt: sql`CURRENT_TIMESTAMP`
-          })
-          .where(eq(schema.debts.id, existing.id));
-      } else {
-        await db.insert(schema.debts).values({
-          userId,
-          contactName: contact,
-          totalOwedToUs: body.debtAmount,
-          totalWeOwe: 0
-        });
-      }
-    } else if (body.creditor && body.debtAmount) {
-      const contact = body.creditor.trim().toUpperCase();
-      const existing = await db
-        .select()
-        .from(schema.debts)
-        .where(and(eq(schema.debts.userId, userId), eq(schema.debts.contactName, contact)))
-        .get();
-      if (existing) {
-        await db
-          .update(schema.debts)
-          .set({
-            totalWeOwe: existing.totalWeOwe + body.debtAmount,
-            updatedAt: sql`CURRENT_TIMESTAMP`
-          })
-          .where(eq(schema.debts.id, existing.id));
-      } else {
-        await db.insert(schema.debts).values({
-          userId,
-          contactName: contact,
-          totalOwedToUs: 0,
-          totalWeOwe: body.debtAmount
-        });
-      }
+    if (body.debtor && body.debtAmount && body.debtAmount > 0) {
+      await adjustDebt(db, userId, body.debtor, body.debtAmount, 0);
+    } else if (body.creditor && body.debtAmount && body.debtAmount > 0) {
+      await adjustDebt(db, userId, body.creditor, 0, body.debtAmount);
     }
 
     return c.json({ success: true, data: inserted[0] });
   })
+  .put(
+    '/:id',
+    zValidator('param', transactionIdParamSchema),
+    zValidator('json', updateTransactionSchema),
+    async (c) => {
+      const db = getDb(c.env.DB);
+      const userId = c.get('userId');
+      const { id: idStr } = c.req.valid('param');
+      const id = parseInt(idStr, 10);
+      const body = c.req.valid('json');
+
+      const existing = await db
+        .select()
+        .from(schema.transactions)
+        .where(and(eq(schema.transactions.id, id), eq(schema.transactions.userId, userId)))
+        .get();
+
+      if (!existing) {
+        return c.json({ success: false, error: 'Transaksi tidak ditemukan' }, 404);
+      }
+
+      const newName = body.name !== undefined ? body.name.trim() : existing.name;
+      const newAmount = body.amount !== undefined ? Math.round(body.amount) : existing.amount;
+      const newDate = body.date !== undefined ? body.date : existing.date;
+      const newTime = body.time !== undefined ? body.time : existing.time;
+      const newCategory = body.category !== undefined ? body.category : existing.category;
+      const newDebtor = body.debtor !== undefined ? body.debtor?.trim() || null : existing.debtor;
+      const newCreditor =
+        body.creditor !== undefined ? body.creditor?.trim() || null : existing.creditor;
+      const newDebtAmount =
+        body.debtAmount !== undefined
+          ? body.debtAmount
+            ? Math.round(body.debtAmount)
+            : 0
+          : (existing.debtAmount ?? 0);
+      const newIsDebtSettled =
+        body.isDebtSettled !== undefined ? body.isDebtSettled : existing.isDebtSettled;
+      const newNotes = body.notes !== undefined ? body.notes?.trim() || null : existing.notes;
+      const newPaymentMethod =
+        body.paymentMethod !== undefined ? body.paymentMethod : existing.paymentMethod;
+      const newSource = body.source !== undefined ? body.source : existing.source;
+
+      // 1. Revert old debt impact if it was unsettled
+      if (existing.isDebtSettled === 0) {
+        if (existing.debtor && existing.debtAmount && existing.debtAmount > 0) {
+          await adjustDebt(db, userId, existing.debtor, -existing.debtAmount, 0);
+        } else if (existing.creditor && existing.debtAmount && existing.debtAmount > 0) {
+          await adjustDebt(db, userId, existing.creditor, 0, -existing.debtAmount);
+        }
+      }
+
+      // 2. Apply new debt impact if active (unsettled)
+      if (newIsDebtSettled === 0) {
+        if (newDebtor && newDebtAmount > 0) {
+          await adjustDebt(db, userId, newDebtor, newDebtAmount, 0);
+        } else if (newCreditor && newDebtAmount > 0) {
+          await adjustDebt(db, userId, newCreditor, 0, newDebtAmount);
+        }
+      }
+
+      const updated = await db
+        .update(schema.transactions)
+        .set({
+          name: newName,
+          amount: newAmount,
+          date: newDate,
+          time: newTime,
+          category: newCategory,
+          debtor: newDebtor,
+          creditor: newCreditor,
+          debtAmount: newDebtAmount,
+          isDebtSettled: newIsDebtSettled,
+          debtSettledAt:
+            newIsDebtSettled === 1 ? existing.debtSettledAt || new Date().toISOString() : null,
+          notes: newNotes,
+          paymentMethod: newPaymentMethod,
+          source: newSource
+        })
+        .where(and(eq(schema.transactions.id, id), eq(schema.transactions.userId, userId)))
+        .returning();
+
+      return c.json({ success: true, data: updated[0] });
+    }
+  )
   .delete('/:id', zValidator('param', transactionIdParamSchema), async (c) => {
     const db = getDb(c.env.DB);
     const userId = c.get('userId');
@@ -208,38 +267,12 @@ export const transactionsRoute = new Hono<AppEnv>()
       return c.json({ success: false, error: 'Transaksi tidak ditemukan' }, 404);
     }
 
-    // Adjust debts if needed (scoped per userId)
-    if (existing.debtor && existing.debtAmount) {
-      const contact = existing.debtor.trim().toUpperCase();
-      const debt = await db
-        .select()
-        .from(schema.debts)
-        .where(and(eq(schema.debts.userId, userId), eq(schema.debts.contactName, contact)))
-        .get();
-      if (debt) {
-        await db
-          .update(schema.debts)
-          .set({
-            totalOwedToUs: Math.max(0, debt.totalOwedToUs - existing.debtAmount),
-            updatedAt: sql`CURRENT_TIMESTAMP`
-          })
-          .where(eq(schema.debts.id, debt.id));
-      }
-    } else if (existing.creditor && existing.debtAmount) {
-      const contact = existing.creditor.trim().toUpperCase();
-      const debt = await db
-        .select()
-        .from(schema.debts)
-        .where(and(eq(schema.debts.userId, userId), eq(schema.debts.contactName, contact)))
-        .get();
-      if (debt) {
-        await db
-          .update(schema.debts)
-          .set({
-            totalWeOwe: Math.max(0, debt.totalWeOwe - existing.debtAmount),
-            updatedAt: sql`CURRENT_TIMESTAMP`
-          })
-          .where(eq(schema.debts.id, debt.id));
+    // Adjust debts only if the deleted transaction was unsettled
+    if (existing.isDebtSettled === 0) {
+      if (existing.debtor && existing.debtAmount && existing.debtAmount > 0) {
+        await adjustDebt(db, userId, existing.debtor, -existing.debtAmount, 0);
+      } else if (existing.creditor && existing.debtAmount && existing.debtAmount > 0) {
+        await adjustDebt(db, userId, existing.creditor, 0, -existing.debtAmount);
       }
     }
 

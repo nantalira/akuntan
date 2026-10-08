@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Mic,
   MicOff,
+  Pencil,
   Send,
   Sparkles,
   User,
@@ -14,13 +15,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { useAiQuota } from '../hooks/useAiQuota';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
+import { EditTransactionDrawer } from './EditTransactionDrawer';
 import { ReceiptScannerModal } from './ReceiptScannerModal';
+import type { TransactionItem } from './TransactionList';
 
 interface Message {
   id: string;
   sender: 'user' | 'bot';
   text: string;
   isSuccess?: boolean;
+  transaction?: TransactionItem;
 }
 
 interface ChatDrawerProps {
@@ -156,6 +160,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
   const [isOpen, setIsOpen] = useState(false);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
   const [sharedImage, setSharedImage] = useState<string | null>(null);
+  const [isShareFallback, setIsShareFallback] = useState(false);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isCooldown, setIsCooldown] = useState(false);
@@ -188,7 +193,9 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
         window.history.replaceState({}, '', window.location.pathname);
       }
 
-      if (payload) {
+      const hasValidContent = !!(payload && (payload.imageBase64 || payload.text || payload.title));
+
+      if (hasValidContent && payload) {
         console.log('[PWA Share] Received shared receipt payload:', {
           hasImage: !!payload.imageBase64,
           title: payload.title,
@@ -197,6 +204,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
 
         if (payload.imageBase64) {
           setSharedImage(payload.imageBase64);
+          setIsShareFallback(false);
           setIsReceiptModalOpen(true);
         } else if (payload.text || payload.title) {
           const combined = [payload.title, payload.text].filter(Boolean).join(' - ');
@@ -205,8 +213,9 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
         }
       } else if (isSharedUrl) {
         console.warn(
-          '[PWA Share] shared_receipt=1 detected but storage was empty. Opening scanner modal as fallback.'
+          '[PWA Share] shared_receipt=1 detected but image payload was missing. Opening scanner modal in fallback mode.'
         );
+        setIsShareFallback(true);
         setIsReceiptModalOpen(true);
       }
     };
@@ -266,6 +275,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
       text: 'Halo! Saya Akuntan AI. Ketik pengeluaranmu dalam bahasa santai, misalnya: "Makan soto 15k" atau "Nalangi Dian 20rb".'
     }
   ]);
+  const [editingTx, setEditingTx] = useState<TransactionItem | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -348,7 +358,8 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
             id: (Date.now() + 1).toString(),
             sender: 'bot',
             text: data.reply,
-            isSuccess: data.recorded
+            isSuccess: data.recorded,
+            transaction: data.transaction
           }
         ]);
         if (data.recorded) {
@@ -472,6 +483,19 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
                       </div>
                     )}
                     <p className="whitespace-pre-wrap">{m.text}</p>
+                    {m.isSuccess && m.transaction && (
+                      <div className="mt-2.5 pt-2 border-t border-slate-100 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setEditingTx(m.transaction ?? null)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-[11px] border border-emerald-200/80 transition-colors shadow-2xs cursor-pointer active:scale-95"
+                          title="Buka detail transaksi untuk melihat atau mengubah data"
+                        >
+                          <Pencil className="w-3 h-3" />
+                          <span>Lihat Transaksi</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   {m.sender === 'user' && (
@@ -659,10 +683,15 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
       {/* Modal OCR Struk Belanjaan */}
       <ReceiptScannerModal
         isOpen={isReceiptModalOpen}
-        onClose={() => setIsReceiptModalOpen(false)}
+        onClose={() => {
+          setIsReceiptModalOpen(false);
+          setIsShareFallback(false);
+        }}
         initialSharedImage={sharedImage}
         onClearSharedImage={() => setSharedImage(null)}
+        isShareFallback={isShareFallback}
         onSuccess={() => {
+          setIsShareFallback(false);
           onTransactionAdded();
           refetchQuota();
           fetchFrequentItems();
@@ -675,6 +704,18 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
               isSuccess: true
             }
           ]);
+        }}
+      />
+
+      {/* Edit Transaction Drawer */}
+      <EditTransactionDrawer
+        transaction={editingTx}
+        isOpen={Boolean(editingTx)}
+        onClose={() => setEditingTx(null)}
+        onSuccess={() => {
+          onTransactionAdded();
+          fetchFrequentItems();
+          setEditingTx(null);
         }}
       />
     </>

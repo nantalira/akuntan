@@ -63,7 +63,16 @@ export default defineConfig({
             files: [
               {
                 name: 'receipt',
-                accept: ['image/*']
+                accept: [
+                  'image/*',
+                  'image/jpeg',
+                  'image/png',
+                  'image/webp',
+                  '.jpg',
+                  '.jpeg',
+                  '.png',
+                  '.webp'
+                ]
               }
             ]
           }

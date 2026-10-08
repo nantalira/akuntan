@@ -8,6 +8,7 @@ import {
   Wallet
 } from 'lucide-react';
 import type React from 'react';
+import { useState } from 'react';
 import {
   Bar,
   BarChart,
@@ -19,7 +20,7 @@ import {
   XAxis,
   YAxis
 } from 'recharts';
-
+import { AllDebtsDrawer } from './AllDebtsDrawer';
 import { BudgetHealthCard } from './BudgetHealthCard';
 import { SmartInsightsCard, type SmartInsightsData } from './SmartInsightsCard';
 
@@ -52,6 +53,8 @@ interface DashboardProps {
   isLoading: boolean;
   budgets?: Record<string, number>;
   onSaveBudgets?: (newBudgets: Array<{ category: string; monthlyLimit: number }>) => Promise<void>;
+  onNavigateToDebts?: () => void;
+  onRefresh?: () => void;
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -77,8 +80,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onMonthChange,
   isLoading,
   budgets = {},
-  onSaveBudgets = async () => {}
+  onSaveBudgets = async () => {},
+  onNavigateToDebts,
+  onRefresh
 }) => {
+  const [debtDrawerType, setDebtDrawerType] = useState<'piutang' | 'hutang' | null>(null);
+
   // Navigation helpers
   const handlePrevMonth = () => {
     const [y, m] = selectedMonth.split('-').map(Number);
@@ -178,40 +185,64 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
 
         {/* Total Owed To Us (Piutang) */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm relative overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setDebtDrawerType('piutang')}
+          className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs relative overflow-hidden cursor-pointer hover:shadow-md hover:border-emerald-300 transition-all active:scale-[0.99] group text-left w-full"
+          title="Klik untuk melihat rincian item piutang"
+        >
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-              Piutang (Ditalangi)
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider group-hover:text-emerald-700 transition-colors">
+              Piutang
             </span>
-            <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center group-hover:bg-emerald-100 transition-colors shrink-0">
               <ArrowUpRight className="w-4 h-4" />
             </div>
           </div>
           <p className="text-xl lg:text-2xl font-black text-emerald-600 tracking-tight">
             {data ? formatRupiah(data.debts.totalOwedToUs) : '...'}
           </p>
-          <p className="text-[11px] text-slate-400 mt-1">Uang yang harus kembali</p>
-        </div>
+          <div className="flex items-center justify-between text-[11px] mt-2.5 pt-2 border-t border-slate-100/80">
+            <span className="text-slate-400 truncate">Belum kembali</span>
+            <span className="text-emerald-600 font-bold shrink-0 whitespace-nowrap flex items-center gap-0.5 group-hover:underline">
+              Lihat &rarr;
+            </span>
+          </div>
+        </button>
 
         {/* Total We Owe (Hutang) */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm relative overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setDebtDrawerType('hutang')}
+          className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs relative overflow-hidden cursor-pointer hover:shadow-md hover:border-rose-300 transition-all active:scale-[0.99] group text-left w-full"
+          title="Klik untuk melihat rincian item hutang"
+        >
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider group-hover:text-rose-700 transition-colors">
               Hutang Kita
             </span>
-            <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center group-hover:bg-rose-100 transition-colors shrink-0">
               <ArrowDownLeft className="w-4 h-4" />
             </div>
           </div>
           <p className="text-xl lg:text-2xl font-black text-rose-600 tracking-tight">
             {data ? formatRupiah(data.debts.totalWeOwe) : '...'}
           </p>
-          <p className="text-[11px] text-slate-400 mt-1">Kewajiban bayar ke orang</p>
-        </div>
+          <div className="flex items-center justify-between text-[11px] mt-2.5 pt-2 border-t border-slate-100/80">
+            <span className="text-slate-400 truncate">Harus dibayar</span>
+            <span className="text-rose-600 font-bold shrink-0 whitespace-nowrap flex items-center gap-0.5 group-hover:underline">
+              Lihat &rarr;
+            </span>
+          </div>
+        </button>
       </div>
 
       {/* Smart Insights Card */}
-      <SmartInsightsCard insights={data?.insights} displayMonthName={displayMonthName} />
+      <SmartInsightsCard
+        insights={data?.insights}
+        displayMonthName={displayMonthName}
+        selectedMonth={selectedMonth}
+      />
 
       {/* Budget Health Card */}
       <BudgetHealthCard
@@ -335,6 +366,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
         </div>
       </div>
+
+      {/* All-Time Debts Drilldown Bottom Drawer */}
+      <AllDebtsDrawer
+        isOpen={Boolean(debtDrawerType)}
+        onClose={() => setDebtDrawerType(null)}
+        initialType={debtDrawerType || 'piutang'}
+        onNavigateToDebts={onNavigateToDebts}
+        onRefresh={onRefresh}
+      />
     </div>
   );
 };

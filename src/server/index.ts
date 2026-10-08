@@ -108,6 +108,7 @@ app.post('/api/share-target', async (c) => {
       console.log(`[Share-Target] Converted receipt to base64, size: ${b64.length} chars`);
     }
 
+    const hasData = Boolean(imageBase64 || title || text);
     const payloadJson = JSON.stringify({
       imageBase64: imageBase64 || undefined,
       title: title || undefined,
@@ -115,7 +116,7 @@ app.post('/api/share-target', async (c) => {
     });
 
     console.log(
-      `[Share-Target] Preparing transition HTML, payload size: ${payloadJson.length} bytes`
+      `[Share-Target] Preparing transition HTML, hasData: ${hasData}, payload size: ${payloadJson.length} bytes`
     );
 
     return c.html(`<!DOCTYPE html>
@@ -132,15 +133,42 @@ app.post('/api/share-target', async (c) => {
     <p style="color:#64748b;font-size:13px;margin:0;">Membuka Akuntan AI...</p>
     <script>
       (function() {
+        var hasData = ${hasData};
         var rawPayload = ${JSON.stringify(payloadJson)};
-
-        // 1. Fallback sync storage (for smaller text / low-res)
-        try { localStorage.setItem('akuntan_shared_receipt', rawPayload); } catch (e) {}
-        try { sessionStorage.setItem('akuntan_shared_receipt', rawPayload); } catch (e) {}
 
         function redirect() {
           window.location.replace('/?shared_receipt=1');
         }
+
+        if (!hasData) {
+          // If no data arrived (e.g. Android intent dropped file stream),
+          // clear previous storage so client activates the fallback scanner directly
+          try { localStorage.removeItem('akuntan_shared_receipt'); } catch (e) {}
+          try { sessionStorage.removeItem('akuntan_shared_receipt'); } catch (e) {}
+          try {
+            var req = indexedDB.open('akuntan_share_db', 1);
+            req.onsuccess = function(e) {
+              var db = e.target.result;
+              if (db.objectStoreNames.contains('shares')) {
+                var tx = db.transaction('shares', 'readwrite');
+                tx.objectStore('shares').delete('latest');
+                tx.oncomplete = function() { redirect(); };
+                tx.onerror = function() { redirect(); };
+              } else {
+                redirect();
+              }
+            };
+            req.onerror = function() { redirect(); };
+            setTimeout(redirect, 600);
+          } catch (e) {
+            redirect();
+          }
+          return;
+        }
+
+        // 1. Fallback sync storage (for smaller text / low-res)
+        try { localStorage.setItem('akuntan_shared_receipt', rawPayload); } catch (e) {}
+        try { sessionStorage.setItem('akuntan_shared_receipt', rawPayload); } catch (e) {}
 
         // 2. Primary reliable storage: IndexedDB (handles large images without 5MB quota limits)
         try {

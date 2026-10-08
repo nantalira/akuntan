@@ -24,6 +24,7 @@ interface ReceiptScannerModalProps {
   onSuccess: () => void;
   initialSharedImage?: string | null;
   onClearSharedImage?: () => void;
+  isShareFallback?: boolean;
 }
 
 const CATEGORIES = ['Makan', 'Jajan', 'Primer', 'Motor', 'Olga', 'Belanja'] as const;
@@ -45,7 +46,8 @@ export function ReceiptScannerModal({
   onClose,
   onSuccess,
   initialSharedImage,
-  onClearSharedImage
+  onClearSharedImage,
+  isShareFallback
 }: ReceiptScannerModalProps) {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -59,13 +61,20 @@ export function ReceiptScannerModal({
   const [category, setCategory] = useState<(typeof CATEGORIES)[number]>('Belanja');
   const [paymentMethod, setPaymentMethod] = useState<string>('QRIS');
   const [txSource, setTxSource] = useState<'ai' | 'share_target'>(() =>
-    initialSharedImage ? 'share_target' : 'ai'
+    initialSharedImage || isShareFallback ? 'share_target' : 'ai'
   );
   const [date, setDate] = useState('');
   const [notes, setNotes] = useState('');
 
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isShareFallback) {
+      setTxSource('share_target');
+      setPaymentMethod('QRIS');
+    }
+  }, [isShareFallback]);
 
   const resetState = useCallback(() => {
     setImagePreview(null);
@@ -76,10 +85,10 @@ export function ReceiptScannerModal({
     setAmount('');
     setCategory('Belanja');
     setPaymentMethod('QRIS');
-    setTxSource('ai');
+    setTxSource(isShareFallback ? 'share_target' : 'ai');
     setDate('');
     setNotes('');
-  }, []);
+  }, [isShareFallback]);
 
   const handleClose = () => {
     resetState();
@@ -179,7 +188,7 @@ export function ReceiptScannerModal({
       const reader = new FileReader();
       reader.onload = async (e) => {
         const rawBase64 = e.target?.result as string;
-        await scanBase64DataUrl(rawBase64, 'ai');
+        await scanBase64DataUrl(rawBase64, isShareFallback ? 'share_target' : 'ai');
       };
       reader.readAsDataURL(file);
     } catch (err) {
@@ -305,30 +314,49 @@ export function ReceiptScannerModal({
             onChange={handleFileChange}
           />
 
-          {!imagePreview && txSource !== 'share_target' && (
+          {!imagePreview && (
             <div className="py-6 flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-2xl bg-gray-50/50 hover:bg-emerald-50/30 transition-colors">
-              <div className="w-16 h-16 bg-white rounded-2xl shadow-sm border border-gray-200 flex items-center justify-center text-emerald-600 mb-3">
-                <Camera className="w-8 h-8" />
-              </div>
-              <p className="text-sm font-semibold text-gray-700 mb-1">Ambil Foto Struk Kasir</p>
-              <p className="text-xs text-gray-400 text-center max-w-xs mb-5">
-                Pastikan angka total belanja dan nama toko terlihat jelas dan tidak terlalu buram
-              </p>
+              {isShareFallback ? (
+                <>
+                  <div className="w-16 h-16 bg-emerald-50 rounded-2xl shadow-sm border border-emerald-200 flex items-center justify-center text-emerald-600 mb-3">
+                    <Smartphone className="w-8 h-8" />
+                  </div>
+                  <p className="text-sm font-semibold text-gray-800 mb-1">
+                    Pilih Bukti Pembayaran QRIS
+                  </p>
+                  <p className="text-xs text-gray-500 text-center max-w-xs mb-5">
+                    Sistem Android belum meneruskan foto otomatis. Silakan pilih foto bukti dari
+                    Galeri Anda untuk diverifikasi
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="w-16 h-16 bg-white rounded-2xl shadow-sm border border-gray-200 flex items-center justify-center text-emerald-600 mb-3">
+                    <Camera className="w-8 h-8" />
+                  </div>
+                  <p className="text-sm font-semibold text-gray-700 mb-1">Ambil Foto Struk Kasir</p>
+                  <p className="text-xs text-gray-400 text-center max-w-xs mb-5">
+                    Pastikan angka total belanja dan nama toko terlihat jelas dan tidak terlalu
+                    buram
+                  </p>
+                </>
+              )}
 
               <div className="flex flex-col sm:flex-row gap-2.5 w-full px-8 max-w-sm">
                 <button
                   type="button"
-                  onClick={() => cameraInputRef.current?.click()}
+                  onClick={() => galleryInputRef.current?.click()}
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-xl shadow-sm shadow-emerald-600/20 active:scale-[0.98] transition-all"
                 >
-                  <Camera className="w-4 h-4" /> Buka Kamera
+                  <Upload className="w-4 h-4" />{' '}
+                  {isShareFallback ? 'Pilih dari Galeri' : 'Galeri File'}
                 </button>
                 <button
                   type="button"
-                  onClick={() => galleryInputRef.current?.click()}
+                  onClick={() => cameraInputRef.current?.click()}
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-xl active:scale-[0.98] transition-all"
                 >
-                  <Upload className="w-4 h-4 text-gray-500" /> Galeri File
+                  <Camera className="w-4 h-4 text-gray-500" /> Buka Kamera
                 </button>
               </div>
             </div>

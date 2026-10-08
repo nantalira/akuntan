@@ -23,8 +23,8 @@
 - [x] 4.1 Tambahkan logika analitik MoM (*Month-over-Month*) pada endpoint `/api/analytics` untuk membandingkan total pengeluaran bulan ini vs bulan lalu pada tanggal yang sama
 - [x] 4.2 Bangun kartu `SmartInsightsCard.tsx` di Dashboard yang menampilkan persentase hemat/boros, transaksi terbesar, dan hari dengan frekuensi belanja tertinggi
 - [x] 4.3 Verifikasi kartu insight: data komparasi dan transaksi terbesar tampil akurat berdasarkan data riwayat D1
-- [ ] 4.4 Buat endpoint `POST /api/analytics/ai-insight` untuk menghasilkan evaluasi naratif singkat via Gemini API berdasarkan ringkasan bulan berjalan dan mencatat pemakaian kuota `ai_usage`
-- [ ] 4.5 Tambahkan tombol opsional `"✨ Minta Evaluasi AI"` beserta tampilan balon komentar saran AI pada komponen `SmartInsightsCard.tsx`
+- [x] 4.4 Buat endpoint `POST /api/analytics/ai-insight` untuk menghasilkan evaluasi naratif singkat via Gemini API berdasarkan ringkasan bulan berjalan dan mencatat pemakaian kuota `ai_usage`
+- [x] 4.5 Tambahkan tombol opsional `"✨ Minta Evaluasi AI"` beserta tampilan balon komentar saran AI pada komponen `SmartInsightsCard.tsx`
 
 ## 5. Ekspor Data (CSV / Excel)
 

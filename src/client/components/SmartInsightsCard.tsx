@@ -1,5 +1,7 @@
-import { Award, Calendar, Sparkles, TrendingDown, TrendingUp } from 'lucide-react';
+import { Award, Calendar, RefreshCw, Sparkles, TrendingDown, TrendingUp } from 'lucide-react';
 import type React from 'react';
+import { useEffect, useState } from 'react';
+import { getAuthHeaders } from '../api';
 import { formatRupiah } from './Dashboard';
 
 export interface SmartInsightsData {
@@ -29,12 +31,56 @@ export interface SmartInsightsData {
 interface SmartInsightsCardProps {
   insights?: SmartInsightsData;
   displayMonthName: string;
+  selectedMonth?: string;
 }
 
 export const SmartInsightsCard: React.FC<SmartInsightsCardProps> = ({
   insights,
-  displayMonthName
+  displayMonthName,
+  selectedMonth
 }) => {
+  const [aiInsight, setAiInsight] = useState<string | null>(null);
+  const [isLoadingAi, setIsLoadingAi] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (selectedMonth) {
+      setAiInsight(null);
+      setAiError(null);
+    }
+  }, [selectedMonth]);
+
+  const handleRequestAiInsight = async () => {
+    if (isLoadingAi) return;
+    setIsLoadingAi(true);
+    setAiError(null);
+
+    try {
+      const res = await fetch('/api/analytics/ai-insight', {
+        method: 'POST',
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        credentials: 'include',
+        body: JSON.stringify({ month: selectedMonth })
+      });
+
+      const json = await res.json<{
+        success: boolean;
+        data?: { insight: string; month: string };
+        error?: string;
+      }>();
+
+      if (!json.success || !json.data) {
+        throw new Error(json.error || 'Gagal memuat evaluasi AI');
+      }
+
+      setAiInsight(json.data.insight);
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : 'Terjadi kendala saat meminta evaluasi AI');
+    } finally {
+      setIsLoadingAi(false);
+    }
+  };
+
   if (!insights) return null;
 
   const { mom, largestTransaction, peakDay } = insights;
@@ -171,6 +217,78 @@ export const SmartInsightsCard: React.FC<SmartInsightsCardProps> = ({
           ) : (
             <p className="text-xs text-slate-400 mt-1">Belum cukup data pola mingguan.</p>
           )}
+        </div>
+      </div>
+
+      {/* 4. AI Financial Evaluation Section */}
+      <div className="pt-2 border-t border-slate-100 flex flex-col gap-3">
+        {/* Balon Saran Finansial AI */}
+        {aiInsight && (
+          <div className="p-4 rounded-xl bg-gradient-to-r from-violet-50/80 via-purple-50/60 to-indigo-50/80 border border-violet-200/80 shadow-xs relative animate-fade-in">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-violet-800">
+                <Sparkles className="w-4 h-4 text-violet-600 animate-pulse" />
+                <span>Evaluasi Finansial Akuntan AI</span>
+              </div>
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">
+                Gemini AI
+              </span>
+            </div>
+            <p className="text-xs sm:text-sm text-slate-700 leading-relaxed font-normal">
+              "{aiInsight}"
+            </p>
+          </div>
+        )}
+
+        {/* Error notice if any */}
+        {aiError && (
+          <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center justify-between">
+            <span>{aiError}</span>
+            <button
+              type="button"
+              onClick={() => setAiError(null)}
+              className="text-rose-400 hover:text-rose-600 font-bold ml-2"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* Action Button: Minta Evaluasi AI */}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="text-[11px] text-slate-400">
+            {aiInsight
+              ? 'Evaluasi dihasilkan berdasarkan pola belanja bulan ini'
+              : 'Dapatkan evaluasi naratif & saran penghematan taktis dari Gemini AI'}
+          </div>
+
+          <button
+            type="button"
+            onClick={handleRequestAiInsight}
+            disabled={isLoadingAi}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all active:scale-[0.98] shadow-xs cursor-pointer ${
+              isLoadingAi
+                ? 'bg-violet-100 text-violet-500 cursor-not-allowed'
+                : 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white shadow-violet-500/20 hover:shadow-violet-500/30'
+            }`}
+          >
+            {isLoadingAi ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Menganalisis Finansial...</span>
+              </>
+            ) : aiInsight ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Analisis Ulang AI</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>✨ Minta Evaluasi AI</span>
+              </>
+            )}
+          </button>
         </div>
       </div>
     </div>

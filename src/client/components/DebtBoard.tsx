@@ -1,8 +1,9 @@
-import { ArrowDownLeft, ArrowUpRight, Check, Users } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Check, ChevronRight, Users } from 'lucide-react';
 import type React from 'react';
 import { useState } from 'react';
 import { api } from '../api';
 import { formatRupiah } from './Dashboard';
+import { DebtDetailDrawer } from './DebtDetailDrawer';
 
 export interface DebtContact {
   id: number;
@@ -19,10 +20,16 @@ interface DebtBoardProps {
 }
 
 export const DebtBoard: React.FC<DebtBoardProps> = ({ debts, onRefresh }) => {
+  const [selectedContact, setSelectedContact] = useState<DebtContact | null>(null);
   const [_settlingContact, setSettlingContact] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSettle = async (contactName: string, target: 'we_owe' | 'owed_to_us') => {
+  const handleSettle = async (
+    e: React.MouseEvent,
+    contactName: string,
+    target: 'we_owe' | 'owed_to_us'
+  ) => {
+    e.stopPropagation();
     setIsSubmitting(true);
     try {
       await api.api.debts.settle.$post({
@@ -55,12 +62,19 @@ export const DebtBoard: React.FC<DebtBoardProps> = ({ debts, onRefresh }) => {
     );
   }
 
+  // Keep selectedContact in sync with updated debts
+  const currentSelected = selectedContact
+    ? debts.find((d) => d.id === selectedContact.id) || selectedContact
+    : null;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="font-bold text-slate-800 text-lg">Papan Perhutangan & Talangan</h3>
-          <p className="text-xs text-slate-400">Status kewajiban dan saldo bersih per orang</p>
+          <p className="text-xs text-slate-400">
+            Klik kartu kontak untuk melihat rincian item & pelunasan
+          </p>
         </div>
         <div className="text-xs font-semibold px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full">
           {debts.length} Kontak Terdaftar
@@ -73,24 +87,42 @@ export const DebtBoard: React.FC<DebtBoardProps> = ({ debts, onRefresh }) => {
           const isBalanced = contact.netBalance === 0;
 
           return (
+            // biome-ignore lint/a11y/useSemanticElements: card contains nested quick settlement button
             <div
               key={contact.id}
-              className={`rounded-2xl p-5 border shadow-sm flex flex-col justify-between transition-all ${
+              role="button"
+              tabIndex={0}
+              onClick={() => setSelectedContact(contact)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setSelectedContact(contact);
+                }
+              }}
+              className={`rounded-2xl p-5 border shadow-xs flex flex-col justify-between transition-all cursor-pointer hover:shadow-md hover:scale-[1.01] active:scale-[0.99] group text-left ${
                 isBalanced
-                  ? 'bg-slate-50/70 border-slate-200'
+                  ? 'bg-slate-50/70 border-slate-200 hover:border-slate-300'
                   : isWeOwe
-                    ? 'bg-rose-50/40 border-rose-200/80 hover:shadow-rose-100'
-                    : 'bg-emerald-50/40 border-emerald-200/80 hover:shadow-emerald-100'
+                    ? 'bg-rose-50/40 border-rose-200/80 hover:border-rose-300 hover:shadow-rose-100/50'
+                    : 'bg-emerald-50/40 border-emerald-200/80 hover:border-emerald-300 hover:shadow-emerald-100/50'
               }`}
             >
               <div>
                 {/* Contact Header */}
                 <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center font-bold text-xs uppercase">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center font-bold text-xs uppercase shadow-2xs">
                       {contact.contactName.slice(0, 2)}
                     </div>
-                    <span className="font-bold text-slate-800 text-sm">{contact.contactName}</span>
+                    <div>
+                      <span className="font-bold text-slate-800 text-sm group-hover:text-emerald-700 transition-colors">
+                        {contact.contactName}
+                      </span>
+                      <div className="text-[10px] text-slate-400 flex items-center gap-0.5">
+                        <span>Lihat detail</span>
+                        <ChevronRight className="w-2.5 h-2.5 group-hover:translate-x-0.5 transition-transform" />
+                      </div>
+                    </div>
                   </div>
 
                   <span
@@ -144,26 +176,28 @@ export const DebtBoard: React.FC<DebtBoardProps> = ({ debts, onRefresh }) => {
                 </div>
               </div>
 
-              {/* Action Button */}
+              {/* Action Button: Settle All Shortcut */}
               {!isBalanced && (
                 <div className="mt-4 pt-3 border-t border-slate-200/50">
                   {isWeOwe ? (
                     <button
-                      onClick={() => handleSettle(contact.contactName, 'we_owe')}
+                      type="button"
+                      onClick={(e) => handleSettle(e, contact.contactName, 'we_owe')}
                       disabled={isSubmitting}
-                      className="w-full bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-semibold py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-sm shadow-rose-200"
+                      className="w-full bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-semibold py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-xs shadow-rose-200 active:scale-95"
                     >
                       <Check className="w-3.5 h-3.5" />
-                      <span>Lunasi Hutang ({formatRupiah(contact.totalWeOwe)})</span>
+                      <span>Lunasi Sekaligus ({formatRupiah(contact.totalWeOwe)})</span>
                     </button>
                   ) : (
                     <button
-                      onClick={() => handleSettle(contact.contactName, 'owed_to_us')}
+                      type="button"
+                      onClick={(e) => handleSettle(e, contact.contactName, 'owed_to_us')}
                       disabled={isSubmitting}
-                      className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-semibold py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-sm shadow-emerald-200"
+                      className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-semibold py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-xs shadow-emerald-200 active:scale-95"
                     >
                       <Check className="w-3.5 h-3.5" />
-                      <span>Tandai Lunas ({formatRupiah(contact.totalOwedToUs)})</span>
+                      <span>Tandai Lunas Sekaligus ({formatRupiah(contact.totalOwedToUs)})</span>
                     </button>
                   )}
                 </div>
@@ -172,6 +206,14 @@ export const DebtBoard: React.FC<DebtBoardProps> = ({ debts, onRefresh }) => {
           );
         })}
       </div>
+
+      {/* Contact Debt Items Detail Drawer */}
+      <DebtDetailDrawer
+        contact={currentSelected}
+        isOpen={Boolean(currentSelected)}
+        onClose={() => setSelectedContact(null)}
+        onRefresh={onRefresh}
+      />
     </div>
   );
 };
