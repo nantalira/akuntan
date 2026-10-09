@@ -17,15 +17,15 @@ Sistem SHALL mengekstrak informasi pengeluaran dari teks percakapan bebas penggu
 - **THEN** sistem mengekstrak nama "superindo", harga 35000, kategori "Belanja", dan mengisi kolom keterangan/notes dengan "sabun, telur, bumbu"
 
 ### Requirement: Categorization with Six Categories
-Sistem MUST mengklasifikasikan setiap transaksi ke dalam salah satu dari 6 kategori valid: Makan, Jajan, Primer, Motor, Olga, atau Belanja.
+Sistem MUST mengklasifikasikan setiap transaksi ke dalam salah satu dari kategori aktif milik pengguna yang terdaftar di sistem secara dinamis, baik melalui kecerdasan buatan Gemini maupun saat pengguna memilih kategori secara manual.
 
 #### Scenario: Deteksi kategori Belanja untuk barang non-makanan
 - **WHEN** pengguna memasukkan pesan "beli celana jeans 120rb" atau "parfum 25rb"
-- **THEN** sistem mengklasifikasikan transaksi tersebut ke kategori "Belanja" dan bukan "Jajan" atau "Primer"
+- **THEN** sistem mengklasifikasikan transaksi tersebut ke kategori yang sesuai dalam daftar kategori pengguna (seperti "Belanja")
 
 #### Scenario: Deteksi kategori Olga untuk aktivitas olahraga
 - **WHEN** pengguna memasukkan pesan "basket 20rb" atau "renang 15rb"
-- **THEN** sistem mengklasifikasikan transaksi tersebut ke kategori "Olga"
+- **THEN** sistem mengklasifikasikan transaksi tersebut ke kategori yang relevan dalam daftar kategori aktif pengguna
 
 ### Requirement: Contextual Backdating
 Sistem SHALL mendukung penentuan tanggal dan jam transaksi berdasarkan indikator waktu lampau dalam pesan pengguna.
@@ -74,4 +74,24 @@ Sistem SHALL menyajikan riwayat transaksi dengan format tanggal yang menyertakan
 #### Scenario: Membuka popup menu aksi transaksi
 - **WHEN** pengguna mengklik tombol menu titik tiga (`⋮`) pada salah satu baris transaksi
 - **THEN** sistem membuka popup ringkas yang menampilkan opsi "Edit Transaksi" dan "Hapus"
+
+### Requirement: Infinite Scroll Pagination on Transaction History
+Sistem SHALL menyediakan kemampuan pemuatan data transaksi berkelanjutan (*infinite scroll*) pada antarmuka riwayat transaksi untuk memuat batch transaksi berikutnya secara otomatis saat pengguna menggulir ke bagian akhir daftar, sehingga seluruh transaksi dalam periode yang difilter dapat diakses tanpa batasan pemotongan data awal.
+
+#### Scenario: Pemuatan otomatis batch transaksi berikutnya
+- **WHEN** pengguna menggulir antarmuka daftar transaksi hingga mencapai batas bawah tampilan dan masih terdapat transaksi lanjutan (`hasMore = true`)
+- **THEN** sistem secara otomatis meminta batch data berikutnya dengan offset sesuai jumlah data yang telah termuat dan menyambungkannya ke daftar transaksi tanpa mereset posisi scroll
+
+#### Scenario: Indikator saat memuat transaksi tambahan
+- **WHEN** sistem sedang mengambil batch transaksi berikutnya dari server
+- **THEN** sistem menampilkan animasi indikator pemuatan data (*loading spinner*) di bagian bawah daftar
+
+#### Scenario: Seluruh data periode selesai dimuat
+- **WHEN** seluruh transaksi dalam filter yang dipilih telah selesai dimuat (`hasMore = false`)
+- **THEN** sistem menampilkan teks penutup yang mengonfirmasi bahwa seluruh transaksi telah ditampilkan dan menghentikan pengamatan scroll
+
+#### Scenario: Reset pagination saat filter diubah
+- **WHEN** pengguna mengubah filter bulan, tanggal, kategori, atau kata kunci pencarian
+- **THEN** sistem mereset offset pagination kembali ke 0, mengosongkan daftar sebelumnya, dan memuat batch awal untuk filter baru tersebut
+
 

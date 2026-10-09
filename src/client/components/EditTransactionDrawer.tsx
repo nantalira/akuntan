@@ -13,6 +13,7 @@ import {
 import type React from 'react';
 import { useEffect, useState } from 'react';
 import { getAuthHeaders } from '../api';
+import { useCategories } from '../hooks/useCategories';
 import type { TransactionItem } from './TransactionList';
 
 interface EditTransactionDrawerProps {
@@ -21,8 +22,6 @@ interface EditTransactionDrawerProps {
   onClose: () => void;
   onSuccess: () => void;
 }
-
-const CATEGORIES = ['Makan', 'Jajan', 'Primer', 'Motor', 'Olga', 'Belanja'] as const;
 
 const PAYMENT_METHODS = [
   'Cash',
@@ -44,6 +43,7 @@ export const EditTransactionDrawer: React.FC<EditTransactionDrawerProps> = ({
   onClose,
   onSuccess
 }) => {
+  const { categories } = useCategories();
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState<string>('Makan');
@@ -255,21 +255,22 @@ export const EditTransactionDrawer: React.FC<EditTransactionDrawerProps> = ({
               Kategori
             </span>
             <div className="grid grid-cols-3 gap-2">
-              {CATEGORIES.map((cat) => {
-                const isSelected = category === cat;
+              {categories.map((cat) => {
+                const isSelected = category.toLowerCase() === cat.name.toLowerCase();
                 return (
                   <button
-                    key={cat}
+                    key={cat.id}
                     type="button"
-                    onClick={() => setCategory(cat)}
-                    className={`py-2 px-2.5 rounded-xl border font-bold transition-all text-center flex items-center justify-center gap-1.5 ${
+                    onClick={() => setCategory(cat.name)}
+                    className={`py-2 px-2 rounded-xl border font-bold transition-all text-center flex items-center justify-center gap-1.5 ${
                       isSelected
                         ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
                         : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
                     }`}
                   >
-                    <span>{cat}</span>
-                    {isSelected && <Check className="w-3 h-3" />}
+                    <span>{cat.emoji}</span>
+                    <span className="truncate">{cat.name}</span>
+                    {isSelected && <Check className="w-3 h-3 shrink-0" />}
                   </button>
                 );
               })}

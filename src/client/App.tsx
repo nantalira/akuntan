@@ -1,10 +1,12 @@
-import { LayoutDashboard, Receipt, RefreshCw, UserCircle2, Users } from 'lucide-react';
+import { HelpCircle, LayoutDashboard, Receipt, RefreshCw, UserCircle2, Users } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { api, setAuthToken } from './api';
 import { AuthScreen, type AuthUser } from './components/AuthScreen';
 import { ChatDrawer } from './components/ChatDrawer';
 import { type AnalyticsData, Dashboard } from './components/Dashboard';
 import { DebtBoard, type DebtContact } from './components/DebtBoard';
+import { FeatureGuideModal, type GuideTab } from './components/FeatureGuideModal';
+import { OnboardingLaunchpad } from './components/OnboardingLaunchpad';
 import { ProfileModal } from './components/ProfileModal';
 import { type TransactionItem, TransactionList } from './components/TransactionList';
 
@@ -12,6 +14,40 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [authChecking, setAuthChecking] = useState<boolean>(true);
   const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
+  const [showGuideModal, setShowGuideModal] = useState<boolean>(false);
+  const [guideInitialTab, setGuideInitialTab] = useState<GuideTab>('qris');
+  const [hasDismissedOnboarding, setHasDismissedOnboarding] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (currentUser?.id) {
+      const dismissed = localStorage.getItem(`akuntan_onboarding_dismissed_${currentUser.id}`);
+      setHasDismissedOnboarding(dismissed === 'true');
+    } else {
+      setHasDismissedOnboarding(false);
+    }
+  }, [currentUser?.id]);
+
+  const handleSkipOnboarding = () => {
+    if (currentUser?.id) {
+      localStorage.setItem(`akuntan_onboarding_dismissed_${currentUser.id}`, 'true');
+    }
+    setHasDismissedOnboarding(true);
+  };
+
+  useEffect(() => {
+    const handleOpenGuide = (e: Event) => {
+      const customEvent = e as CustomEvent<{ tab?: GuideTab }>;
+      if (customEvent.detail?.tab) {
+        setGuideInitialTab(customEvent.detail.tab);
+      }
+      setShowGuideModal(true);
+    };
+
+    window.addEventListener('akuntan:open-guide', handleOpenGuide);
+    return () => {
+      window.removeEventListener('akuntan:open-guide', handleOpenGuide);
+    };
+  }, []);
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'debts' | 'transactions'>('dashboard');
 
@@ -30,6 +66,8 @@ export default function App() {
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   const [debts, setDebts] = useState<DebtContact[]>([]);
   const [transactions, setTransactions] = useState<TransactionItem[]>([]);
+  const [hasMoreTransactions, setHasMoreTransactions] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('Semua');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -75,7 +113,9 @@ export default function App() {
             month: selectedMonth,
             date: selectedDate !== 'all' ? selectedDate : undefined,
             category: selectedCategory !== 'Semua' ? selectedCategory : undefined,
-            search: searchQuery.trim() || undefined
+            search: searchQuery.trim() || undefined,
+            limit: '50',
+            offset: '0'
           }
         }),
         api.api.budgets.$get()
@@ -100,6 +140,11 @@ export default function App() {
       const txJson = await txRes.json();
       if (txJson.success) {
         setTransactions(txJson.data as TransactionItem[]);
+        if (txJson.pagination) {
+          setHasMoreTransactions(Boolean(txJson.pagination.hasMore));
+        } else {
+          setHasMoreTransactions(txJson.data.length >= 50);
+        }
       }
 
       const budgetsJson = await budgetsRes.json();
@@ -116,6 +161,52 @@ export default function App() {
       setIsLoading(false);
     }
   }, [currentUser, selectedMonth, selectedDate, selectedCategory, searchQuery]);
+
+  const loadMoreTransactions = useCallback(async () => {
+    if (!currentUser || isLoadingMore || !hasMoreTransactions) return;
+    setIsLoadingMore(true);
+    try {
+      const res = await api.api.transactions.$get({
+        query: {
+          month: selectedMonth,
+          date: selectedDate !== 'all' ? selectedDate : undefined,
+          category: selectedCategory !== 'Semua' ? selectedCategory : undefined,
+          search: searchQuery.trim() || undefined,
+          limit: '50',
+          offset: transactions.length.toString()
+        }
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          const newItems = json.data as TransactionItem[];
+          setTransactions((prev) => {
+            const existingIds = new Set(prev.map((t) => t.id));
+            const uniqueNew = newItems.filter((t) => !existingIds.has(t.id));
+            return [...prev, ...uniqueNew];
+          });
+          if (json.pagination) {
+            setHasMoreTransactions(Boolean(json.pagination.hasMore));
+          } else {
+            setHasMoreTransactions(newItems.length >= 50);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error loading more transactions:', err);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [
+    currentUser,
+    isLoadingMore,
+    hasMoreTransactions,
+    selectedMonth,
+    selectedDate,
+    selectedCategory,
+    searchQuery,
+    transactions.length
+  ]);
 
   const handleSaveBudgets = async (
     newBudgets: Array<{ category: string; monthlyLimit: number }>
@@ -145,6 +236,7 @@ export default function App() {
     setAuthToken(null);
     setCurrentUser(null);
     setShowProfileModal(false);
+    setHasDismissedOnboarding(false);
   };
 
   if (authChecking) {
@@ -163,6 +255,13 @@ export default function App() {
   if (!currentUser) {
     return <AuthScreen onAuthenticated={(user) => setCurrentUser(user)} />;
   }
+
+  const isNewUserOnboarding =
+    Boolean(currentUser) &&
+    !isLoading &&
+    !hasDismissedOnboarding &&
+    transactions.length === 0 &&
+    (analyticsData?.monthTotal === 0 || !analyticsData);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-24 lg:pb-12">
@@ -189,6 +288,18 @@ export default function App() {
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={() => {
+                setGuideInitialTab('qris');
+                setShowGuideModal(true);
+              }}
+              className="p-2 rounded-xl text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors"
+              title="Panduan & Tutorial Fitur"
+            >
+              <HelpCircle className="w-4 h-4" />
+            </button>
+
+            <button
+              type="button"
               onClick={fetchData}
               disabled={isLoading}
               className="p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
@@ -212,82 +323,100 @@ export default function App() {
         </div>
       </header>
 
-      {/* Navigation Tabs Header */}
-      <div className="max-w-6xl mx-auto px-4 lg:px-8 pt-6 pb-2">
-        <div className="flex bg-slate-200/70 p-1 rounded-2xl max-w-md">
-          <button
-            type="button"
-            onClick={() => setActiveTab('dashboard')}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-bold transition-all ${
-              activeTab === 'dashboard'
-                ? 'bg-white text-emerald-700 shadow-sm'
-                : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <LayoutDashboard className="w-4 h-4" />
-            <span>Dashboard</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('transactions')}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-bold transition-all ${
-              activeTab === 'transactions'
-                ? 'bg-white text-emerald-700 shadow-sm'
-                : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <Receipt className="w-4 h-4" />
-            <span>Transaksi</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('debts')}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-bold transition-all ${
-              activeTab === 'debts'
-                ? 'bg-white text-emerald-700 shadow-sm'
-                : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <Users className="w-4 h-4" />
-            <span>Hutang</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Main Content Area */}
-      <main className="max-w-6xl mx-auto px-4 lg:px-8 pt-4">
-        {activeTab === 'dashboard' && (
-          <Dashboard
-            data={analyticsData}
-            selectedMonth={selectedMonth}
-            onMonthChange={setSelectedMonth}
-            isLoading={isLoading}
-            budgets={budgets}
-            onSaveBudgets={handleSaveBudgets}
-            onNavigateToDebts={() => setActiveTab('debts')}
-            onRefresh={fetchData}
+      {/* Render Dedicated Onboarding Screen for new users, OR Normal Dashboard & Tabs */}
+      {isNewUserOnboarding ? (
+        <main className="max-w-6xl mx-auto px-4 lg:px-8 pt-4">
+          <OnboardingLaunchpad
+            onOpenGuide={(tab) => {
+              if (tab) setGuideInitialTab(tab);
+              setShowGuideModal(true);
+            }}
+            onSkip={handleSkipOnboarding}
           />
-        )}
+        </main>
+      ) : (
+        <>
+          {/* Navigation Tabs Header */}
+          <div className="max-w-6xl mx-auto px-4 lg:px-8 pt-6 pb-2">
+            <div className="flex bg-slate-200/70 p-1 rounded-2xl max-w-md">
+              <button
+                type="button"
+                onClick={() => setActiveTab('dashboard')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-bold transition-all ${
+                  activeTab === 'dashboard'
+                    ? 'bg-white text-emerald-700 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <LayoutDashboard className="w-4 h-4" />
+                <span>Dashboard</span>
+              </button>
 
-        {activeTab === 'transactions' && (
-          <TransactionList
-            transactions={transactions}
-            selectedMonth={selectedMonth}
-            onMonthChange={setSelectedMonth}
-            selectedDate={selectedDate}
-            onDateChange={setSelectedDate}
-            selectedCategory={selectedCategory}
-            onCategoryChange={setSelectedCategory}
-            searchQuery={searchQuery}
-            onSearchChange={setSearchQuery}
-            onRefresh={fetchData}
-          />
-        )}
+              <button
+                type="button"
+                onClick={() => setActiveTab('transactions')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-bold transition-all ${
+                  activeTab === 'transactions'
+                    ? 'bg-white text-emerald-700 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <Receipt className="w-4 h-4" />
+                <span>Transaksi</span>
+              </button>
 
-        {activeTab === 'debts' && <DebtBoard debts={debts} onRefresh={fetchData} />}
-      </main>
+              <button
+                type="button"
+                onClick={() => setActiveTab('debts')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-bold transition-all ${
+                  activeTab === 'debts'
+                    ? 'bg-white text-emerald-700 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <Users className="w-4 h-4" />
+                <span>Hutang</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Main Content Area */}
+          <main className="max-w-6xl mx-auto px-4 lg:px-8 pt-4">
+            {activeTab === 'dashboard' && (
+              <Dashboard
+                data={analyticsData}
+                selectedMonth={selectedMonth}
+                onMonthChange={setSelectedMonth}
+                isLoading={isLoading}
+                budgets={budgets}
+                onSaveBudgets={handleSaveBudgets}
+                onNavigateToDebts={() => setActiveTab('debts')}
+                onRefresh={fetchData}
+              />
+            )}
+
+            {activeTab === 'transactions' && (
+              <TransactionList
+                transactions={transactions}
+                selectedMonth={selectedMonth}
+                onMonthChange={setSelectedMonth}
+                selectedDate={selectedDate}
+                onDateChange={setSelectedDate}
+                selectedCategory={selectedCategory}
+                onCategoryChange={setSelectedCategory}
+                searchQuery={searchQuery}
+                onSearchChange={setSearchQuery}
+                onRefresh={fetchData}
+                hasMore={hasMoreTransactions}
+                isLoadingMore={isLoadingMore}
+                onLoadMore={loadMoreTransactions}
+              />
+            )}
+
+            {activeTab === 'debts' && <DebtBoard debts={debts} onRefresh={fetchData} />}
+          </main>
+        </>
+      )}
 
       {/* Floating AI Chat Assistant Drawer */}
       <ChatDrawer onTransactionAdded={fetchData} />
@@ -300,8 +429,19 @@ export default function App() {
           onUserUpdated={(updated) => setCurrentUser(updated)}
           onLogout={handleLogout}
           onTransactionSimulated={fetchData}
+          onOpenGuide={(tab) => {
+            if (tab) setGuideInitialTab(tab);
+            setShowGuideModal(true);
+          }}
         />
       )}
+
+      {/* Feature Guide & Tutorial Modal */}
+      <FeatureGuideModal
+        isOpen={showGuideModal}
+        onClose={() => setShowGuideModal(false)}
+        initialTab={guideInitialTab}
+      />
     </div>
   );
 }

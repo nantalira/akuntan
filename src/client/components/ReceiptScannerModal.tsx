@@ -17,6 +17,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReceiptExtractedData } from '../../server/routes/scanReceipt';
 import { getAuthHeaders } from '../api';
+import { useCategories } from '../hooks/useCategories';
 
 interface ReceiptScannerModalProps {
   isOpen: boolean;
@@ -27,7 +28,6 @@ interface ReceiptScannerModalProps {
   isShareFallback?: boolean;
 }
 
-const CATEGORIES = ['Makan', 'Jajan', 'Primer', 'Motor', 'Olga', 'Belanja'] as const;
 const PAYMENT_METHODS = [
   'QRIS',
   'Cash',
@@ -49,6 +49,7 @@ export function ReceiptScannerModal({
   onClearSharedImage,
   isShareFallback
 }: ReceiptScannerModalProps) {
+  const { categories } = useCategories();
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +59,7 @@ export function ReceiptScannerModal({
   // Form states
   const [merchant, setMerchant] = useState('');
   const [amount, setAmount] = useState<number | string>('');
-  const [category, setCategory] = useState<(typeof CATEGORIES)[number]>('Belanja');
+  const [category, setCategory] = useState<string>('Belanja');
   const [paymentMethod, setPaymentMethod] = useState<string>('QRIS');
   const [txSource, setTxSource] = useState<'ai' | 'share_target'>(() =>
     initialSharedImage || isShareFallback ? 'share_target' : 'ai'
@@ -498,12 +499,12 @@ export function ReceiptScannerModal({
                   <select
                     id="receipt-category"
                     value={category}
-                    onChange={(e) => setCategory(e.target.value as (typeof CATEGORIES)[number])}
+                    onChange={(e) => setCategory(e.target.value)}
                     className="w-full px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
                   >
-                    {CATEGORIES.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
+                    {categories.map((cat) => (
+                      <option key={cat.id} value={cat.name}>
+                        {cat.emoji} {cat.name}
                       </option>
                     ))}
                   </select>

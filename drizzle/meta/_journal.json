@@ -43,6 +43,13 @@
       "when": 1791445314053,
       "tag": "0005_lazy_barracuda",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1791518713764,
+      "tag": "0006_premium_zemo",
+      "breakpoints": true
     }
   ]
 }

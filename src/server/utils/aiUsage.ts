@@ -57,15 +57,38 @@ export async function getAiQuotaStatus(
   isCustomKey: boolean = false
 ): Promise<AiQuotaStatus> {
   const date = getTodayDateString();
-  const record = await db
-    .select()
-    .from(schema.aiUsage)
-    .where(and(eq(schema.aiUsage.userId, userId), eq(schema.aiUsage.date, date)))
-    .get();
 
-  const used = record?.requestCount ?? 0;
+  let used = 0;
   const limit = isCustomKey ? 9999 : getAiDailyLimit(modelName, overrideLimit);
-  const remaining = Math.max(0, limit - used);
+  let remaining = limit;
+
+  if (isCustomKey) {
+    const userRecord = await db
+      .select({ requestCount: schema.aiUsage.requestCount })
+      .from(schema.aiUsage)
+      .where(and(eq(schema.aiUsage.userId, userId), eq(schema.aiUsage.date, date)))
+      .get();
+    used = userRecord?.requestCount ?? 0;
+    remaining = 9999;
+  } else {
+    const sharedUsageRes = await db
+      .select({
+        total: sql<number>`COALESCE(SUM(${schema.aiUsage.requestCount}), 0)`
+      })
+      .from(schema.aiUsage)
+      .where(
+        and(
+          eq(schema.aiUsage.date, date),
+          sql`${schema.aiUsage.userId} NOT IN (
+            SELECT ${schema.users.id} FROM ${schema.users} 
+            WHERE ${schema.users.geminiApiKey} IS NOT NULL AND length(trim(${schema.users.geminiApiKey})) > 0
+          )`
+        )
+      )
+      .get();
+    used = sharedUsageRes?.total ?? 0;
+    remaining = Math.max(0, limit - used);
+  }
 
   let status: 'safe' | 'warning' | 'exceeded' = 'safe';
   if (!isCustomKey) {

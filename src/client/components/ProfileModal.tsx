@@ -1,7 +1,9 @@
-import { KeyRound, LogOut, Save, Share2, ShieldCheck, User as UserIcon, X } from 'lucide-react';
+import { BookOpen, KeyRound, LogOut, Save, ShieldCheck, User as UserIcon, X } from 'lucide-react';
 import { useState } from 'react';
 import { api } from '../api';
 import type { AuthUser } from './AuthScreen';
+import { CategoryManagerModal } from './CategoryManagerModal';
+import { FeatureGuideModal, type GuideTab } from './FeatureGuideModal';
 
 interface ProfileModalProps {
   user: AuthUser;
@@ -9,6 +11,7 @@ interface ProfileModalProps {
   onUserUpdated: (user: AuthUser) => void;
   onLogout: () => void;
   onTransactionSimulated?: () => void;
+  onOpenGuide?: (tab?: GuideTab) => void;
 }
 
 export function ProfileModal({
@@ -16,13 +19,16 @@ export function ProfileModal({
   onClose,
   onUserUpdated,
   onLogout,
-  onTransactionSimulated
+  onTransactionSimulated,
+  onOpenGuide
 }: ProfileModalProps) {
   const [name, setName] = useState(user.name);
   const [geminiApiKey, setGeminiApiKey] = useState('');
   const [clearCustomKey, setClearCustomKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,23 +109,57 @@ export function ProfileModal({
             </div>
           )}
 
-          {/* Panduan: Bagikan Bukti Bayar QRIS */}
-          <div className="p-4 rounded-2xl bg-emerald-50/80 border border-emerald-200/80 space-y-1.5">
+          {/* Panduan & Tutorial Fitur */}
+          <div className="p-4 rounded-2xl bg-emerald-50/80 border border-emerald-200/80 space-y-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-900">
-                <Share2 className="w-4 h-4 text-emerald-600" />
-                <span>Panduan: Bagikan Bukti Bayar QRIS</span>
+                <BookOpen className="w-4 h-4 text-emerald-600" />
+                <span>Panduan & Tutorial Fitur</span>
               </div>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-200/70 text-emerald-800">
-                iOS & Android
+                Lengkap
               </span>
             </div>
             <p className="text-[11px] text-emerald-800/90 leading-relaxed">
-              Setelah meng-install aplikasi ini ke layar utama HP (PWA / Android), setiap selesai
-              bayar QRIS di <strong>myBCA, Livin Mandiri, BRImo, BNI, GoPay, DANA, atau OVO</strong>{' '}
-              cukup klik tombol <strong>"Bagikan / Share"</strong> pada bukti bayar lalu pilih{' '}
-              <strong>Akuntan AI</strong>!
+              Pelajari cara otomatisasi PWA Share QRIS dari m-Banking, input suara AI, scan struk
+              belanja fisik, dan pencatatan hutang/piutang.
             </p>
+            <button
+              type="button"
+              onClick={() => {
+                if (onOpenGuide) {
+                  onOpenGuide();
+                } else {
+                  setIsGuideOpen(true);
+                }
+              }}
+              className="mt-1 w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>Buka Pusat Panduan</span>
+            </button>
+          </div>
+
+          {/* Kelola Kategori Pengeluaran */}
+          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center text-lg">
+                🏷️
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-slate-800">Kategori Pengeluaran</h4>
+                <p className="text-[11px] text-slate-500">
+                  Kustomisasi nama pos, ikon emoji & warna
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsCategoryModalOpen(true)}
+              className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1"
+            >
+              Kelola
+            </button>
           </div>
 
           {/* Profile & BYOK Gemini Form */}
@@ -226,6 +266,13 @@ export function ProfileModal({
           </div>
         </div>
       </div>
+
+      <CategoryManagerModal
+        isOpen={isCategoryModalOpen}
+        onClose={() => setIsCategoryModalOpen(false)}
+      />
+
+      <FeatureGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
     </div>
   );
 }

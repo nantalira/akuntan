@@ -6,6 +6,7 @@ import { aiQuotaRoute } from './routes/aiQuota';
 import { analyticsRoute } from './routes/analytics';
 import { authRoute } from './routes/auth';
 import { budgetsRoute } from './routes/budgets';
+import { categoriesRoute } from './routes/categories';
 import { chatRoute } from './routes/chat';
 import { debtsRoute } from './routes/debts';
 import { exportRoute } from './routes/export';
@@ -219,6 +220,8 @@ app.use('/api/analytics/*', authMiddleware);
 app.use('/api/analytics', authMiddleware);
 app.use('/api/debts/*', authMiddleware);
 app.use('/api/debts', authMiddleware);
+app.use('/api/categories/*', authMiddleware);
+app.use('/api/categories', authMiddleware);
 app.use('/api/budgets/*', authMiddleware);
 app.use('/api/budgets', authMiddleware);
 app.use('/api/export/*', authMiddleware);
@@ -233,6 +236,7 @@ const apiRoutes = app
   .route('/api/scan-receipt', scanReceiptRoute)
   .route('/api/analytics', analyticsRoute)
   .route('/api/debts', debtsRoute)
+  .route('/api/categories', categoriesRoute)
   .route('/api/budgets', budgetsRoute)
   .route('/api/export', exportRoute);
 

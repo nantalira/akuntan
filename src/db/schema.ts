@@ -1,9 +1,16 @@
 import { sql } from 'drizzle-orm';
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
-export const categories = ['Makan', 'Jajan', 'Primer', 'Motor', 'Olga', 'Belanja'] as const;
+export const DEFAULT_CATEGORIES = [
+  { name: 'Makan', emoji: '🍜', color: '#10b981' },
+  { name: 'Jajan', emoji: '☕', color: '#f59e0b' },
+  { name: 'Primer', emoji: '🛒', color: '#3b82f6' },
+  { name: 'Transport', emoji: '⛽', color: '#6366f1' },
+  { name: 'Olga', emoji: '🏸', color: '#ec4899' },
+  { name: 'Belanja', emoji: '🛍️', color: '#8b5cf6' }
+] as const;
 
-export type Category = (typeof categories)[number];
+export type Category = string;
 
 export const users = sqliteTable('users', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -88,6 +95,26 @@ export const aiUsage = sqliteTable(
   })
 );
 
+export const categories = sqliteTable(
+  'categories',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id),
+    name: text('name').notNull(),
+    emoji: text('emoji').notNull().default('💰'),
+    color: text('color').notNull().default('#10b981'),
+    sortOrder: integer('sort_order').notNull().default(0),
+    isActive: integer('is_active').notNull().default(1),
+    createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull()
+  },
+  (table) => ({
+    userCategoryUnique: uniqueIndex('idx_categories_user_name').on(table.userId, table.name),
+    userIdIdx: index('idx_categories_user_id').on(table.userId)
+  })
+);
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Transaction = typeof transactions.$inferSelect;
@@ -96,3 +123,5 @@ export type Debt = typeof debts.$inferSelect;
 export type Budget = typeof budgets.$inferSelect;
 export type AiUsage = typeof aiUsage.$inferSelect;
 export type NewAiUsage = typeof aiUsage.$inferInsert;
+export type CategoryItem = typeof categories.$inferSelect;
+export type NewCategoryItem = typeof categories.$inferInsert;

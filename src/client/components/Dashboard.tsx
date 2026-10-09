@@ -20,6 +20,7 @@ import {
   XAxis,
   YAxis
 } from 'recharts';
+import { useCategories } from '../hooks/useCategories';
 import { AllDebtsDrawer } from './AllDebtsDrawer';
 import { BudgetHealthCard } from './BudgetHealthCard';
 import { SmartInsightsCard, type SmartInsightsData } from './SmartInsightsCard';
@@ -57,15 +58,6 @@ interface DashboardProps {
   onRefresh?: () => void;
 }
 
-const CATEGORY_COLORS: Record<string, string> = {
-  Makan: '#f97316', // Orange
-  Jajan: '#eab308', // Yellow
-  Primer: '#3b82f6', // Blue
-  Motor: '#64748b', // Slate
-  Olga: '#10b981', // Emerald
-  Belanja: '#8b5cf6' // Purple
-};
-
 export const formatRupiah = (val: number) => {
   return new Intl.NumberFormat('id-ID', {
     style: 'currency',
@@ -84,6 +76,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onNavigateToDebts,
   onRefresh
 }) => {
+  const { getCategoryColor, getCategoryEmoji } = useCategories();
   const [debtDrawerType, setDebtDrawerType] = useState<'piutang' | 'hutang' | null>(null);
 
   // Navigation helpers
@@ -279,7 +272,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     {data.categoryBreakdown.map((entry) => (
                       <Cell
                         key={`cell-${entry.category}`}
-                        fill={CATEGORY_COLORS[entry.category] || '#94a3b8'}
+                        fill={getCategoryColor(entry.category)}
                       />
                     ))}
                   </Pie>
@@ -304,14 +297,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-slate-100">
             {data?.categoryBreakdown.map((cat) => (
               <div key={cat.category} className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 min-w-0">
                   <span
-                    className="w-2.5 h-2.5 rounded-full"
-                    style={{ backgroundColor: CATEGORY_COLORS[cat.category] || '#94a3b8' }}
+                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{ backgroundColor: getCategoryColor(cat.category) }}
                   />
-                  <span className="text-slate-600 font-medium">{cat.category}</span>
+                  <span className="text-slate-600 font-medium truncate flex items-center gap-1">
+                    <span>{getCategoryEmoji(cat.category)}</span>
+                    <span className="truncate">{cat.category}</span>
+                  </span>
                 </div>
-                <span className="font-bold text-slate-700">{cat.percentage}%</span>
+                <span className="font-bold text-slate-700 shrink-0">{cat.percentage}%</span>
               </div>
             ))}
           </div>

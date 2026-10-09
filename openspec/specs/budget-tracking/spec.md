@@ -7,10 +7,10 @@ Menyediakan penetapan batas anggaran bulanan per kategori dan visualisasi health
 ## Requirements
 
 ### Requirement: Budget Limit Configuration
-Sistem SHALL menyediakan antarmuka bagi pengguna untuk menentukan dan memperbarui batas anggaran maksimal bulanan untuk setiap kategori pengeluaran (`Makan`, `Jajan`, `Primer`, `Motor`, `Olga`, `Belanja`).
+Sistem SHALL menyediakan antarmuka bagi pengguna untuk menentukan dan memperbarui batas anggaran maksimal bulanan untuk setiap pos kategori pengeluaran aktif milik pengguna.
 
 #### Scenario: User sets monthly budget
-- **WHEN** pengguna memasukkan batas anggaran (misal: "Makan: Rp 1.500.000") dan menyimpannya
+- **WHEN** pengguna memasukkan batas anggaran pada salah satu pos kategori aktifnya dan menyimpannya
 - **THEN** sistem menyimpan atau memperbarui nilai `monthlyLimit` di tabel `budgets` untuk kategori tersebut
 
 ### Requirement: Budget Health Bar Visualization

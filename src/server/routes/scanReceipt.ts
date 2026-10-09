@@ -4,11 +4,12 @@ import { z } from 'zod';
 import { getDb } from '../../db/client';
 import type { AppEnv } from '../index';
 import { getAiQuotaStatus, incrementAiUsage, resolveUserGeminiConfig } from '../utils/aiUsage';
+import { getUserActiveCategories } from '../utils/categories';
 
 export type ReceiptExtractedData = {
   merchant: string;
   amount: number;
-  category: 'Makan' | 'Jajan' | 'Primer' | 'Motor' | 'Olga' | 'Belanja';
+  category: string;
   date: string;
   time: string;
   items: string[];
@@ -65,6 +66,11 @@ export const scanReceiptRoute = new Hono<AppEnv>().post(
     const todayStr = wibDate.toISOString().split('T')[0];
     const currentTimeStr = wibDate.toTimeString().split(' ')[0];
 
+    const userCats = await getUserActiveCategories(db, userId);
+    const catNames = userCats.map((c) => c.name);
+    const catNamesFormatted = catNames.map((n) => `"${n}"`).join(', ');
+    const catListPrompt = userCats.map((c) => `   - "${c.name}" (${c.emoji})`).join('\n');
+
     const systemPrompt = `Kamu adalah OCR akuntan struk kasir berbahasa Indonesia yang sangat teliti.
 Tugasmu adalah menganalisis foto struk belanjaan kasir (minimarket, supermarket, restoran, kafe, SPBU, apotek, toko baju, perkakas, dll).
 Hari ini adalah: ${todayStr}, jam saat ini: ${currentTimeStr} (WIB).
@@ -72,13 +78,9 @@ Hari ini adalah: ${todayStr}, jam saat ini: ${currentTimeStr} (WIB).
 Instruksi Analisis:
 1. "merchant": Nama toko / restoran / kasir (contoh: "Indomaret", "Alfamart", "Kopi Kenangan", "SPBU Pertamina"). Jika tidak terbaca jelas, isi "Toko/Kasir".
 2. "amount": Nominal total akhir yang dibayar (Grand Total setelah diskon/pajak). WAJIB bilangan bulat positif (integer). Jangan ambil subtotal sebelum diskon jika ada Grand Total.
-3. "category": Tentukan satu kategori yang paling tepat dari 6 kategori wajib berikut:
-   - "Makan": Makanan berat / resto (nasi, ayam, steak, bakso, warteg, mie).
-   - "Jajan": Minuman kopi, boba, es krim, snack, camilan, rokok.
-   - "Primer": Kebutuhan pokok harian (minyak, beras, sabun, odol, deterjen, galon, obat apotek).
-   - "Motor": Bensin SPBU, servis, oli, tambal ban.
-   - "Olga": Tiket gym, sewa lapangan, perlengkapan olahraga.
-   - "Belanja": Pakaian, perabotan, elektronik, buku, perkakas non-makanan.
+3. "category": Tentukan satu kategori yang paling tepat dari pos pengeluaran pengguna berikut:
+${catListPrompt}
+   WAJIB persis salah satu dari: [${catNamesFormatted}].
 4. "date": Tanggal transaksi berformat "YYYY-MM-DD" jika tertera di struk. Jika tanggal di struk tidak terbaca atau buram, gunakan tanggal hari ini: "${todayStr}".
 5. "time": Waktu transaksi berformat "HH:mm:ss" jika tertera di struk, atau jam saat ini: "${currentTimeStr}".
 6. "items": Daftar array string ringkasan nama item barang yang dibeli (maksimal 5 item utama).
@@ -89,7 +91,7 @@ Kembalikan respon DALAM FORMAT JSON PERSIS SEPERTI INI:
 {
   "merchant": "Indomaret",
   "amount": 47500,
-  "category": "Primer",
+  "category": ${catNames[0] ? `"${catNames[0]}"` : '"Belanja"'},
   "date": "${todayStr}",
   "time": "${currentTimeStr}",
   "items": ["Minyak Goreng 2L", "Sabun Cuci", "Pasta Gigi"],
@@ -160,11 +162,13 @@ Kembalikan respon DALAM FORMAT JSON PERSIS SEPERTI INI:
         console.error('Failed to increment AI usage counter in scanReceipt:', dbErr);
       }
 
-      // Normalize category
-      const validCategories = ['Makan', 'Jajan', 'Primer', 'Motor', 'Olga', 'Belanja'] as const;
-      let safeCategory: (typeof validCategories)[number] = 'Belanja';
-      if (validCategories.includes(parsed.category as (typeof validCategories)[number])) {
-        safeCategory = parsed.category as (typeof validCategories)[number];
+      // Normalize category with user's active categories
+      let safeCategory = userCats[0]?.name || 'Belanja';
+      if (parsed.category) {
+        const match = userCats.find((c) => c.name.toLowerCase() === parsed.category?.toLowerCase());
+        if (match) {
+          safeCategory = match.name;
+        }
       }
 
       const normalizedData: ReceiptExtractedData = {

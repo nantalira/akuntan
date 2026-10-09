@@ -1,6 +1,7 @@
 import { AlertTriangle, CheckCircle, Settings, ShieldAlert, Target } from 'lucide-react';
 import type React from 'react';
 import { useState } from 'react';
+import { useCategories } from '../hooks/useCategories';
 import { BudgetModal } from './BudgetModal';
 
 interface CategoryBreakdownItem {
@@ -20,6 +21,7 @@ export const BudgetHealthCard: React.FC<BudgetHealthCardProps> = ({
   budgets,
   onSaveBudgets
 }) => {
+  const { categories } = useCategories();
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   // Map category spent
@@ -28,7 +30,6 @@ export const BudgetHealthCard: React.FC<BudgetHealthCardProps> = ({
     spentMap[item.category] = item.total;
   }
 
-  const categories = ['Makan', 'Jajan', 'Primer', 'Motor', 'Olga', 'Belanja'];
   const hasAnyBudget = Object.values(budgets).some((v) => v > 0);
 
   return (
@@ -72,8 +73,8 @@ export const BudgetHealthCard: React.FC<BudgetHealthCardProps> = ({
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {categories.map((cat) => {
-            const limit = budgets[cat] || 0;
-            const spent = spentMap[cat] || 0;
+            const limit = budgets[cat.name] || 0;
+            const spent = spentMap[cat.name] || 0;
             if (limit === 0 && spent === 0) return null;
 
             const percent = limit > 0 ? Math.round((spent / limit) * 100) : 0;
@@ -96,12 +97,15 @@ export const BudgetHealthCard: React.FC<BudgetHealthCardProps> = ({
 
             return (
               <div
-                key={cat}
+                key={cat.id}
                 className="p-3 bg-slate-50/60 rounded-xl border border-slate-100 space-y-2"
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5">
-                    <span className="font-semibold text-xs text-slate-700">{cat}</span>
+                    <span className="font-semibold text-xs text-slate-700 flex items-center gap-1">
+                      <span>{cat.emoji}</span>
+                      <span>{cat.name}</span>
+                    </span>
                     {limit > 0 && (
                       <span
                         className={`text-[10px] font-bold px-1.5 py-0.5 rounded border flex items-center gap-1 ${badgeColor}`}

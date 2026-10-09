@@ -84,19 +84,34 @@ export const transactionsRoute = new Hono<AppEnv>()
 
     const whereClause = and(...conditions);
 
-    const data = await db
-      .select()
-      .from(schema.transactions)
-      .where(whereClause)
-      .orderBy(
-        desc(schema.transactions.date),
-        desc(schema.transactions.time),
-        desc(schema.transactions.id)
-      )
-      .limit(limit)
-      .offset(offset);
+    const [data, countResult] = await Promise.all([
+      db
+        .select()
+        .from(schema.transactions)
+        .where(whereClause)
+        .orderBy(
+          desc(schema.transactions.date),
+          desc(schema.transactions.time),
+          desc(schema.transactions.id)
+        )
+        .limit(limit)
+        .offset(offset),
+      db.select({ total: sql<number>`count(*)` }).from(schema.transactions).where(whereClause).get()
+    ]);
 
-    return c.json({ success: true, data });
+    const total = countResult?.total ?? 0;
+    const hasMore = offset + data.length < total;
+
+    return c.json({
+      success: true,
+      data,
+      pagination: {
+        total,
+        limit,
+        offset,
+        hasMore
+      }
+    });
   })
   .get('/frequent', zValidator('query', frequentTransactionsQuerySchema), async (c) => {
     const db = getDb(c.env.DB);

@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { getDb, schema } from '../../db/client';
 import type { AppEnv } from '../index';
 import { getAiQuotaStatus, incrementAiUsage, resolveUserGeminiConfig } from '../utils/aiUsage';
+import { getUserActiveCategories } from '../utils/categories';
 import { detectPaymentMethod } from '../utils/paymentParser';
 
 interface GeminiParsedResponse {
@@ -13,7 +14,7 @@ interface GeminiParsedResponse {
   amount?: number;
   date?: string; // YYYY-MM-DD
   time?: string; // HH:mm:ss
-  category?: 'Makan' | 'Jajan' | 'Primer' | 'Motor' | 'Olga' | 'Belanja';
+  category?: string;
   payment_method?: string;
   debtor?: string;
   creditor?: string;
@@ -43,6 +44,11 @@ export const chatRoute = new Hono<AppEnv>().post(
     const todayStr = wibDate.toISOString().split('T')[0]; // YYYY-MM-DD
     const currentTimeStr = wibDate.toTimeString().split(' ')[0]; // HH:mm:ss
 
+    const userCats = await getUserActiveCategories(db, userId);
+    const catNames = userCats.map((c) => c.name);
+    const catNamesFormatted = catNames.map((n) => `"${n}"`).join(', ');
+    const catListPrompt = userCats.map((c) => `- ${c.name} (${c.emoji})`).join('\n');
+
     const { apiKey, isCustomKey } = await resolveUserGeminiConfig(db, userId, c.env.GEMINI_API_KEY);
     let parsed: GeminiParsedResponse;
     let inputSource: 'ai' | 'local_parser' = 'local_parser';
@@ -61,20 +67,16 @@ export const chatRoute = new Hono<AppEnv>().post(
         console.warn(
           `AI Quota reached limit for user ${userId} (${quota.used}/${quota.limit}), falling back to local parser`
         );
-        parsed = fallbackLocalParser(message, todayStr, currentTimeStr);
+        parsed = fallbackLocalParser(message, todayStr, currentTimeStr, userCats);
       } else {
         try {
           const systemInstruction = `Kamu adalah Akuntan AI, asisten pencatatan pengeluaran pribadi berbahasa Indonesia yang cerdas dan teliti.
 Hari ini adalah: ${todayStr}, jam saat ini: ${currentTimeStr} (WIB).
 
 Tugasmu adalah menganalisis pesan santai pengguna tentang pengeluaran, hutang, patungan, atau pelunasan, lalu mengembalikan JSON terstruktur.
-Kategori WAJIB salah satu dari: ["Makan", "Jajan", "Primer", "Motor", "Olga", "Belanja"].
-- Makan: Makanan berat (nasi padang, dada ayam, rames, soto, telur, lauk).
-- Jajan: Camilan, kopi, rokok, gorengan, es, jus, degan.
-- Primer: Kebutuhan mutlak (listrik, galon, kos, pulsa, paket internet, sabun, sampo).
-- Motor: Transportasi bensin, servis, tambal ban.
-- Olga: Olahraga (basket, gym, renang).
-- Belanja: Barang fisik awet non-konsumsi (celana, baju, parfum, elektronik, perkakas).
+Kategori transaksi WAJIB persis salah satu dari pos pengguna berikut: [${catNamesFormatted}].
+Daftar Pos Pengeluaran Pengguna:
+${catListPrompt}
 
 Aturan Deteksi Hutang / Split Bill:
 1. "nalangi [nama] [item] [harga]" -> debtor: [nama dalam HURUF BESAR], debt_amount: [harga yang ditalangi].
@@ -94,7 +96,7 @@ Kembalikan format JSON:
   "amount": number (integer positif),
   "date": "YYYY-MM-DD",
   "time": "HH:mm:ss",
-  "category": "Makan" | "Jajan" | "Primer" | "Motor" | "Olga" | "Belanja",
+  "category": ${catNamesFormatted || '"Makan"'},
   "debtor": "nama yang ditalangi atau kosong",
   "creditor": "nama yang menalangi atau kosong",
   "debt_amount": number,
@@ -146,12 +148,20 @@ Kembalikan format JSON:
         } catch (err) {
           console.error('Gemini API error, falling back to local heuristic:', err);
           inputSource = 'local_parser';
-          parsed = fallbackLocalParser(message, todayStr, currentTimeStr);
+          parsed = fallbackLocalParser(message, todayStr, currentTimeStr, userCats);
         }
       }
     } else {
       inputSource = 'local_parser';
-      parsed = fallbackLocalParser(message, todayStr, currentTimeStr);
+      parsed = fallbackLocalParser(message, todayStr, currentTimeStr, userCats);
+    }
+
+    // Normalize category to user's active categories
+    if (parsed.category) {
+      const match = userCats.find((c) => c.name.toLowerCase() === parsed.category?.toLowerCase());
+      parsed.category = match ? match.name : userCats[0]?.name || 'Makan';
+    } else {
+      parsed.category = userCats[0]?.name || 'Makan';
     }
 
     // If general chat / greeting
@@ -276,7 +286,8 @@ Kembalikan format JSON:
 function fallbackLocalParser(
   text: string,
   today: string,
-  currentTime: string
+  currentTime: string,
+  userCategories: Array<{ name: string; emoji: string }> = []
 ): GeminiParsedResponse {
   const lower = text.toLowerCase();
 
@@ -312,16 +323,20 @@ function fallbackLocalParser(
     amount = val;
   }
 
-  // Category detection
-  let category: GeminiParsedResponse['category'] = 'Jajan';
-  if (
+  // Dynamic category detection
+  let category = userCategories[0]?.name || 'Makan';
+  const matchedUserCat = userCategories.find((c) => lower.includes(c.name.toLowerCase()));
+  if (matchedUserCat) {
+    category = matchedUserCat.name;
+  } else if (
     lower.includes('bensin') ||
     lower.includes('motor') ||
     lower.includes('servis') ||
     lower.includes('oli') ||
     lower.includes('tambal')
   ) {
-    category = 'Motor';
+    const found = userCategories.find((c) => /transport|motor|kendaraan/i.test(c.name));
+    if (found) category = found.name;
   } else if (
     lower.includes('soto') ||
     lower.includes('mie') ||
@@ -332,7 +347,8 @@ function fallbackLocalParser(
     lower.includes('warteg') ||
     lower.includes('bebek')
   ) {
-    category = 'Makan';
+    const found = userCategories.find((c) => /makan/i.test(c.name));
+    if (found) category = found.name;
   } else if (
     lower.includes('listrik') ||
     lower.includes('kos') ||
@@ -343,7 +359,8 @@ function fallbackLocalParser(
     lower.includes('sabun') ||
     lower.includes('odol')
   ) {
-    category = 'Primer';
+    const found = userCategories.find((c) => /primer|kebutuhan|rutin/i.test(c.name));
+    if (found) category = found.name;
   } else if (
     lower.includes('basket') ||
     lower.includes('gym') ||
@@ -351,7 +368,8 @@ function fallbackLocalParser(
     lower.includes('futsal') ||
     lower.includes('badminton')
   ) {
-    category = 'Olga';
+    const found = userCategories.find((c) => /olga|olahraga|sport/i.test(c.name));
+    if (found) category = found.name;
   } else if (
     lower.includes('celana') ||
     lower.includes('baju') ||
@@ -360,7 +378,11 @@ function fallbackLocalParser(
     lower.includes('tas') ||
     lower.includes('kaos')
   ) {
-    category = 'Belanja';
+    const found = userCategories.find((c) => /belanja|shopping/i.test(c.name));
+    if (found) category = found.name;
+  } else {
+    const jajanFound = userCategories.find((c) => /jajan|kopi|snack/i.test(c.name));
+    if (jajanFound) category = jajanFound.name;
   }
 
   // Debt detection

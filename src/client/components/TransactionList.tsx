@@ -13,8 +13,9 @@ import {
   Trash2
 } from 'lucide-react';
 import type React from 'react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
+import { useCategories } from '../hooks/useCategories';
 import { formatRupiah } from './Dashboard';
 import { EditTransactionDrawer } from './EditTransactionDrawer';
 
@@ -47,9 +48,10 @@ interface TransactionListProps {
   searchQuery: string;
   onSearchChange: (q: string) => void;
   onRefresh: () => void;
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
 }
-
-const CATEGORIES = ['Semua', 'Makan', 'Jajan', 'Primer', 'Motor', 'Olga', 'Belanja'];
 
 const formatTransactionDate = (dateStr: string) => {
   if (!dateStr) return '';
@@ -78,11 +80,40 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   onCategoryChange,
   searchQuery,
   onSearchChange,
-  onRefresh
+  onRefresh,
+  hasMore = false,
+  isLoadingMore = false,
+  onLoadMore
 }) => {
+  const { categories, getCategoryEmoji } = useCategories();
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [editingTx, setEditingTx] = useState<TransactionItem | null>(null);
   const [menuOpenTxId, setMenuOpenTxId] = useState<number | null>(null);
+
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!hasMore || isLoadingMore || !onLoadMore) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          onLoadMore();
+        }
+      },
+      { root: null, rootMargin: '200px', threshold: 0.1 }
+    );
+
+    const el = sentinelRef.current;
+    if (el) {
+      observer.observe(el);
+    }
+
+    return () => {
+      if (el) observer.unobserve(el);
+      observer.disconnect();
+    };
+  }, [hasMore, isLoadingMore, onLoadMore]);
 
   const now = new Date();
   const todayStr = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Jakarta' }).format(now);
@@ -91,6 +122,11 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   const yesterdayStr = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Jakarta' }).format(
     yesterday
   );
+
+  const isFiltered =
+    searchQuery.trim() !== '' ||
+    selectedCategory !== 'Semua' ||
+    (selectedDate !== 'all' && selectedDate !== todayStr);
 
   const handlePrevMonth = () => {
     const [y, m] = selectedMonth.split('-').map(Number);
@@ -266,17 +302,30 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
       {/* Category Pills */}
       <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
-        {CATEGORIES.map((cat) => (
+        <button
+          type="button"
+          onClick={() => onCategoryChange('Semua')}
+          className={`text-xs px-3 py-1.5 rounded-xl font-medium transition-all shrink-0 ${
+            selectedCategory === 'Semua'
+              ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-200'
+              : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
+          }`}
+        >
+          Semua
+        </button>
+        {categories.map((cat) => (
           <button
-            key={cat}
-            onClick={() => onCategoryChange(cat)}
-            className={`text-xs px-3 py-1.5 rounded-xl font-medium transition-all shrink-0 ${
-              selectedCategory === cat
+            key={cat.id}
+            type="button"
+            onClick={() => onCategoryChange(cat.name)}
+            className={`text-xs px-3 py-1.5 rounded-xl font-medium transition-all shrink-0 flex items-center gap-1 ${
+              selectedCategory === cat.name
                 ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-200'
                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
             }`}
           >
-            {cat}
+            <span>{cat.emoji}</span>
+            <span>{cat.name}</span>
           </button>
         ))}
       </div>
@@ -285,7 +334,9 @@ export const TransactionList: React.FC<TransactionListProps> = ({
       <div className="divide-y divide-slate-100">
         {transactions.length === 0 ? (
           <div className="py-12 text-center text-slate-400 text-xs">
-            Tidak ada transaksi yang cocok dengan filter.
+            {isFiltered
+              ? 'Tidak ada transaksi yang cocok dengan filter.'
+              : 'Belum ada transaksi tercatat di periode ini.'}
           </div>
         ) : (
           transactions.map((tx) => (
@@ -297,8 +348,9 @@ export const TransactionList: React.FC<TransactionListProps> = ({
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-semibold text-slate-800 text-sm truncate">{tx.name}</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 font-medium">
-                    {tx.category}
+                  <span className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 font-medium flex items-center gap-1">
+                    <span>{getCategoryEmoji(tx.category)}</span>
+                    <span>{tx.category}</span>
                   </span>
                   {tx.paymentMethod && tx.paymentMethod !== 'Cash' && (
                     <span
@@ -429,6 +481,25 @@ export const TransactionList: React.FC<TransactionListProps> = ({
           ))
         )}
       </div>
+
+      {/* Infinite Scroll Sentinel & Status */}
+      {transactions.length > 0 && (
+        <div className="pt-2 pb-4 text-center">
+          {hasMore ? (
+            <div
+              ref={sentinelRef}
+              className="py-3 flex items-center justify-center gap-2 text-xs text-slate-500 font-medium animate-pulse"
+            >
+              <div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+              <span>Memuat transaksi berikutnya...</span>
+            </div>
+          ) : (
+            <div className="py-3 text-xs text-slate-400 font-medium">
+              ✓ Semua transaksi periode ini sudah ditampilkan ({transactions.length} transaksi)
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Edit Transaction Bottom Drawer */}
       <EditTransactionDrawer

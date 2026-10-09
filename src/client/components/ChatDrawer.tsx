@@ -14,6 +14,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { useAiQuota } from '../hooks/useAiQuota';
+import { useCategories } from '../hooks/useCategories';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { EditTransactionDrawer } from './EditTransactionDrawer';
 import { ReceiptScannerModal } from './ReceiptScannerModal';
@@ -37,25 +38,6 @@ interface FrequentItem {
   category: string;
   frequency: number;
 }
-
-const getCategoryEmoji = (category: string) => {
-  switch (category?.toLowerCase()) {
-    case 'makan':
-      return '🍜';
-    case 'jajan':
-      return '☕';
-    case 'primer':
-      return '🛒';
-    case 'motor':
-      return '⛽';
-    case 'olga':
-      return '🏸';
-    case 'belanja':
-      return '🛍️';
-    default:
-      return '💰';
-  }
-};
 
 const formatAmountShort = (amount: number) => {
   if (amount >= 1000) {
@@ -167,6 +149,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
   const cooldownTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const { quota, refetch: refetchQuota } = useAiQuota();
+  const { getCategoryEmoji } = useCategories();
   const [frequentItems, setFrequentItems] = useState<FrequentItem[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(true);
 
@@ -299,6 +282,24 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
     }
   }, [input]);
 
+  useEffect(() => {
+    const handleOpenChat = (e: Event) => {
+      const customEvent = e as CustomEvent<{ prompt?: string }>;
+      setIsOpen(true);
+      if (customEvent.detail?.prompt) {
+        setInput(customEvent.detail.prompt);
+      }
+      setTimeout(() => {
+        textareaRef.current?.focus();
+      }, 100);
+    };
+
+    window.addEventListener('akuntan:open-chat', handleOpenChat);
+    return () => {
+      window.removeEventListener('akuntan:open-chat', handleOpenChat);
+    };
+  }, []);
+
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
@@ -420,22 +421,30 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
                     <h3 className="font-bold text-slate-800 text-sm">Akuntan AI</h3>
                     {quota && (
                       <span
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border transition-colors ${
-                          quota.status === 'exceeded'
-                            ? 'bg-rose-50 text-rose-700 border-rose-200'
-                            : quota.status === 'warning'
-                              ? 'bg-amber-50 text-amber-700 border-amber-200'
-                              : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border transition-colors cursor-help ${
+                          quota.isCustomKey
+                            ? 'bg-purple-50 text-purple-700 border-purple-200'
+                            : quota.status === 'exceeded'
+                              ? 'bg-rose-50 text-rose-700 border-rose-200'
+                              : quota.status === 'warning'
+                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                : 'bg-emerald-50 text-emerald-700 border-emerald-200'
                         }`}
-                        title={`Model: ${quota.model} | Terpakai: ${quota.used}/${quota.limit}`}
+                        title={
+                          quota.isCustomKey
+                            ? `Model: ${quota.model} | API Key Pribadi Aktif (Tanpa Batas)`
+                            : `Model: ${quota.model} | Kuota Server Bersama: ${quota.used}/${quota.limit} (${quota.remaining} sisa, reset 00:00 WIB). Pasang Gemini API Key gratis di Profil untuk kuota tanpa batas.`
+                        }
                       >
-                        {quota.status === 'exceeded' ? (
+                        {quota.isCustomKey ? (
+                          <>🔑 Kunci Pribadi</>
+                        ) : quota.status === 'exceeded' ? (
                           <>
-                            ⛔ Kuota AI Habis ({quota.used}/{quota.limit})
+                            ⛔ Kuota Bersama Habis ({quota.used}/{quota.limit})
                           </>
                         ) : (
                           <>
-                            ✨ AI: {quota.used}/{quota.limit} ({quota.remaining} sisa)
+                            ✨ Kuota Bersama: {quota.used}/{quota.limit}
                           </>
                         )}
                       </span>
@@ -455,6 +464,34 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {/* Banner Kuota Bersama jika menipis atau habis */}
+            {quota &&
+              !quota.isCustomKey &&
+              (quota.status === 'warning' || quota.status === 'exceeded') && (
+                <div
+                  className={`px-4 py-2 text-xs flex items-center justify-between gap-2 border-b ${
+                    quota.status === 'exceeded'
+                      ? 'bg-rose-50 text-rose-800 border-rose-100'
+                      : 'bg-amber-50 text-amber-800 border-amber-100'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">
+                      {quota.status === 'exceeded'
+                        ? 'Kuota AI bersama habis hari ini (reset 00:00 WIB).'
+                        : `Kuota AI bersama tersisa ${quota.remaining} request lagi.`}
+                    </span>
+                  </div>
+                  <span
+                    className="text-[11px] font-semibold text-emerald-700 shrink-0 select-none"
+                    title="Anda bisa memasukkan API Key Gemini gratis milik Anda sendiri di menu Profil"
+                  >
+                    Gunakan Key Sendiri di Profil 🔑
+                  </span>
+                </div>
+              )}
 
             {/* Message History */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-slate-50/50">
