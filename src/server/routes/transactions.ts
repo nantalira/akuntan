@@ -4,7 +4,8 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb, schema } from '../../db/client';
 import type { AppEnv } from '../index';
-import { adjustDebt } from '../utils/debtHelper';
+import { getDebtAdjustmentStatement } from '../utils/debtHelper';
+import { getCurrentDateAndTimeInTimezone, resolveUserTimezone } from '../utils/timezone';
 
 const listTransactionsQuerySchema = z.object({
   month: z.string().optional(),
@@ -21,13 +22,16 @@ const frequentTransactionsQuerySchema = z.object({
 
 const createTransactionSchema = z.object({
   name: z.string().min(1, 'Nama transaksi wajib diisi'),
-  amount: z.number().positive('Nominal harus lebih dari 0'),
-  date: z.string().min(1, 'Tanggal wajib diisi'),
+  amount: z
+    .number()
+    .int('Nominal transaksi harus berupa integer Rupiah tanpa desimal')
+    .positive('Nominal harus lebih dari 0'),
+  date: z.string().min(1, 'Tanggal tidak valid').optional(),
   time: z.string().optional(),
   category: z.string().min(1, 'Kategori wajib diisi'),
   debtor: z.string().optional(),
   creditor: z.string().optional(),
-  debtAmount: z.number().nonnegative().optional(),
+  debtAmount: z.number().int('Nominal hutang harus berupa integer Rupiah').nonnegative().optional(),
   notes: z.string().optional(),
   paymentMethod: z.string().optional(),
   referenceId: z.string().optional(),
@@ -36,13 +40,22 @@ const createTransactionSchema = z.object({
 
 const updateTransactionSchema = z.object({
   name: z.string().min(1, 'Nama transaksi wajib diisi').optional(),
-  amount: z.number().positive('Nominal harus lebih dari 0').optional(),
-  date: z.string().min(1, 'Tanggal wajib diisi').optional(),
+  amount: z
+    .number()
+    .int('Nominal transaksi harus berupa integer Rupiah tanpa desimal')
+    .positive('Nominal harus lebih dari 0')
+    .optional(),
+  date: z.string().min(1, 'Tanggal tidak valid').optional(),
   time: z.string().optional(),
   category: z.string().min(1, 'Kategori wajib diisi').optional(),
   debtor: z.string().nullable().optional(),
   creditor: z.string().nullable().optional(),
-  debtAmount: z.number().nonnegative().nullable().optional(),
+  debtAmount: z
+    .number()
+    .int('Nominal hutang harus berupa integer Rupiah')
+    .nonnegative()
+    .nullable()
+    .optional(),
   isDebtSettled: z.number().int().min(0).max(1).optional(),
   notes: z.string().nullable().optional(),
   paymentMethod: z.string().optional(),
@@ -148,21 +161,28 @@ export const transactionsRoute = new Hono<AppEnv>()
     const userId = c.get('userId');
     const body = c.req.valid('json');
 
+    // Stateless timezone ingestion (fallback: Asia/Jakarta)
+    const userTimezone = resolveUserTimezone(c.req.header('X-User-Timezone'));
+    const currentDateTime = getCurrentDateAndTimeInTimezone(userTimezone);
+
     const source = body.source?.trim() || 'manual';
     const paymentMethod = body.paymentMethod?.trim() || 'Cash';
+    const txDate = body.date || currentDateTime.date;
+    const txTime = body.time || currentDateTime.time;
+    const debtAmount = body.debtAmount ? body.debtAmount : 0;
 
-    const inserted = await db
+    const insertTxStmt = db
       .insert(schema.transactions)
       .values({
         userId,
         name: body.name.trim(),
-        amount: Math.round(body.amount),
-        date: body.date,
-        time: body.time || '12:00:00',
+        amount: body.amount,
+        date: txDate,
+        time: txTime,
         category: body.category,
         debtor: body.debtor?.trim() || null,
         creditor: body.creditor?.trim() || null,
-        debtAmount: body.debtAmount ? Math.round(body.debtAmount) : 0,
+        debtAmount,
         notes: body.notes?.trim() || null,
         paymentMethod,
         referenceId: body.referenceId?.trim() || null,
@@ -170,18 +190,31 @@ export const transactionsRoute = new Hono<AppEnv>()
       })
       .returning();
 
-    console.log(
-      `[TRANSACTION_LOGGER] User:${userId} | ID: ${inserted[0].id} | Nama: "${inserted[0].name}" | Rp${inserted[0].amount} | Kategori: ${inserted[0].category} | Sumber: ${inserted[0].source.toUpperCase()}`
-    );
-
-    // Update debts table if debtor or creditor is specified (scoped per userId)
-    if (body.debtor && body.debtAmount && body.debtAmount > 0) {
-      await adjustDebt(db, userId, body.debtor, body.debtAmount, 0);
-    } else if (body.creditor && body.debtAmount && body.debtAmount > 0) {
-      await adjustDebt(db, userId, body.creditor, 0, body.debtAmount);
+    // Prepare atomic debt adjustment if debtor or creditor is specified
+    let debtStmt = null;
+    if (body.debtor && debtAmount > 0) {
+      debtStmt = await getDebtAdjustmentStatement(db, userId, body.debtor, debtAmount, 0);
+    } else if (body.creditor && debtAmount > 0) {
+      debtStmt = await getDebtAdjustmentStatement(db, userId, body.creditor, 0, debtAmount);
     }
 
-    return c.json({ success: true, data: inserted[0] });
+    let insertedRow: schema.Transaction;
+    if (debtStmt) {
+      const batchResults = (await db.batch([insertTxStmt, debtStmt])) as [
+        schema.Transaction[],
+        unknown
+      ];
+      insertedRow = batchResults[0][0];
+    } else {
+      const rows = await insertTxStmt;
+      insertedRow = rows[0];
+    }
+
+    console.log(
+      `[TRANSACTION_LOGGER] User:${userId} | ID: ${insertedRow.id} | Nama: "${insertedRow.name}" | Rp${insertedRow.amount} | Kategori: ${insertedRow.category} | Sumber: ${insertedRow.source.toUpperCase()}`
+    );
+
+    return c.json({ success: true, data: insertedRow });
   })
   .put(
     '/:id',
@@ -205,7 +238,7 @@ export const transactionsRoute = new Hono<AppEnv>()
       }
 
       const newName = body.name !== undefined ? body.name.trim() : existing.name;
-      const newAmount = body.amount !== undefined ? Math.round(body.amount) : existing.amount;
+      const newAmount = body.amount !== undefined ? body.amount : existing.amount;
       const newDate = body.date !== undefined ? body.date : existing.date;
       const newTime = body.time !== undefined ? body.time : existing.time;
       const newCategory = body.category !== undefined ? body.category : existing.category;
@@ -213,11 +246,7 @@ export const transactionsRoute = new Hono<AppEnv>()
       const newCreditor =
         body.creditor !== undefined ? body.creditor?.trim() || null : existing.creditor;
       const newDebtAmount =
-        body.debtAmount !== undefined
-          ? body.debtAmount
-            ? Math.round(body.debtAmount)
-            : 0
-          : (existing.debtAmount ?? 0);
+        body.debtAmount !== undefined ? (body.debtAmount ?? 0) : (existing.debtAmount ?? 0);
       const newIsDebtSettled =
         body.isDebtSettled !== undefined ? body.isDebtSettled : existing.isDebtSettled;
       const newNotes = body.notes !== undefined ? body.notes?.trim() || null : existing.notes;
@@ -225,25 +254,44 @@ export const transactionsRoute = new Hono<AppEnv>()
         body.paymentMethod !== undefined ? body.paymentMethod : existing.paymentMethod;
       const newSource = body.source !== undefined ? body.source : existing.source;
 
-      // 1. Revert old debt impact if it was unsettled
-      if (existing.isDebtSettled === 0) {
-        if (existing.debtor && existing.debtAmount && existing.debtAmount > 0) {
-          await adjustDebt(db, userId, existing.debtor, -existing.debtAmount, 0);
-        } else if (existing.creditor && existing.debtAmount && existing.debtAmount > 0) {
-          await adjustDebt(db, userId, existing.creditor, 0, -existing.debtAmount);
-        }
+      // Net debt delta calculation per contact for atomic reconciliation
+      const contactDeltas = new Map<string, { deltaOwedToUs: number; deltaWeOwe: number }>();
+      const addDelta = (name: string, owedToUs: number, weOwe: number) => {
+        const key = name.trim().toUpperCase();
+        if (!key) return;
+        const current = contactDeltas.get(key) || { deltaOwedToUs: 0, deltaWeOwe: 0 };
+        current.deltaOwedToUs += owedToUs;
+        current.deltaWeOwe += weOwe;
+        contactDeltas.set(key, current);
+      };
+
+      // 1. Revert previous debt impact if it was unsettled
+      if (existing.isDebtSettled === 0 && (existing.debtAmount ?? 0) > 0) {
+        if (existing.debtor) addDelta(existing.debtor, -(existing.debtAmount ?? 0), 0);
+        if (existing.creditor) addDelta(existing.creditor, 0, -(existing.debtAmount ?? 0));
       }
 
       // 2. Apply new debt impact if active (unsettled)
-      if (newIsDebtSettled === 0) {
-        if (newDebtor && newDebtAmount > 0) {
-          await adjustDebt(db, userId, newDebtor, newDebtAmount, 0);
-        } else if (newCreditor && newDebtAmount > 0) {
-          await adjustDebt(db, userId, newCreditor, 0, newDebtAmount);
+      if (newIsDebtSettled === 0 && newDebtAmount > 0) {
+        if (newDebtor) addDelta(newDebtor, newDebtAmount, 0);
+        if (newCreditor) addDelta(newCreditor, 0, newDebtAmount);
+      }
+
+      const debtStmts = [];
+      for (const [contact, deltas] of contactDeltas.entries()) {
+        if (deltas.deltaOwedToUs !== 0 || deltas.deltaWeOwe !== 0) {
+          const stmt = await getDebtAdjustmentStatement(
+            db,
+            userId,
+            contact,
+            deltas.deltaOwedToUs,
+            deltas.deltaWeOwe
+          );
+          if (stmt) debtStmts.push(stmt);
         }
       }
 
-      const updated = await db
+      const updateTxStmt = db
         .update(schema.transactions)
         .set({
           name: newName,
@@ -264,7 +312,19 @@ export const transactionsRoute = new Hono<AppEnv>()
         .where(and(eq(schema.transactions.id, id), eq(schema.transactions.userId, userId)))
         .returning();
 
-      return c.json({ success: true, data: updated[0] });
+      let updatedRow: schema.Transaction;
+      if (debtStmts.length > 0) {
+        const batchResults = (await db.batch([updateTxStmt, ...debtStmts])) as [
+          schema.Transaction[],
+          ...unknown[]
+        ];
+        updatedRow = batchResults[0][0];
+      } else {
+        const rows = await updateTxStmt;
+        updatedRow = rows[0];
+      }
+
+      return c.json({ success: true, data: updatedRow });
     }
   )
   .delete('/:id', zValidator('param', transactionIdParamSchema), async (c) => {
@@ -278,21 +338,44 @@ export const transactionsRoute = new Hono<AppEnv>()
       .from(schema.transactions)
       .where(and(eq(schema.transactions.id, id), eq(schema.transactions.userId, userId)))
       .get();
+
     if (!existing) {
       return c.json({ success: false, error: 'Transaksi tidak ditemukan' }, 404);
     }
 
-    // Adjust debts only if the deleted transaction was unsettled
-    if (existing.isDebtSettled === 0) {
-      if (existing.debtor && existing.debtAmount && existing.debtAmount > 0) {
-        await adjustDebt(db, userId, existing.debtor, -existing.debtAmount, 0);
-      } else if (existing.creditor && existing.debtAmount && existing.debtAmount > 0) {
-        await adjustDebt(db, userId, existing.creditor, 0, -existing.debtAmount);
+    // Revert unsettled debt atomically
+    const debtStmts = [];
+    if (existing.isDebtSettled === 0 && (existing.debtAmount ?? 0) > 0) {
+      if (existing.debtor) {
+        const stmt = await getDebtAdjustmentStatement(
+          db,
+          userId,
+          existing.debtor,
+          -(existing.debtAmount ?? 0),
+          0
+        );
+        if (stmt) debtStmts.push(stmt);
+      } else if (existing.creditor) {
+        const stmt = await getDebtAdjustmentStatement(
+          db,
+          userId,
+          existing.creditor,
+          0,
+          -(existing.debtAmount ?? 0)
+        );
+        if (stmt) debtStmts.push(stmt);
       }
     }
 
-    await db
+    const deleteTxStmt = db
       .delete(schema.transactions)
       .where(and(eq(schema.transactions.id, id), eq(schema.transactions.userId, userId)));
+
+    if (debtStmts.length > 0) {
+      await db.batch([deleteTxStmt, ...debtStmts]);
+    } else {
+      await deleteTxStmt;
+    }
+
     return c.json({ success: true, deleted: existing });
   });

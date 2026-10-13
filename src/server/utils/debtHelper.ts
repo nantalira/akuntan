@@ -2,7 +2,11 @@ import { and, eq, sql } from 'drizzle-orm';
 import type { getDb } from '../../db/client';
 import { schema } from '../../db/client';
 
-export async function adjustDebt(
+/**
+ * Prepares an atomic debt adjustment statement for Drizzle db.batch([...]).
+ * Returns null if no operation is needed.
+ */
+export async function getDebtAdjustmentStatement(
   db: ReturnType<typeof getDb>,
   userId: number,
   contactName: string,
@@ -10,7 +14,7 @@ export async function adjustDebt(
   deltaWeOwe: number
 ) {
   const contact = contactName.trim().toUpperCase();
-  if (!contact) return;
+  if (!contact) return null;
 
   const existing = await db
     .select()
@@ -21,7 +25,7 @@ export async function adjustDebt(
   if (existing) {
     const updatedOwed = Math.max(0, existing.totalOwedToUs + deltaOwedToUs);
     const updatedWeOwe = Math.max(0, existing.totalWeOwe + deltaWeOwe);
-    await db
+    return db
       .update(schema.debts)
       .set({
         totalOwedToUs: updatedOwed,
@@ -29,12 +33,32 @@ export async function adjustDebt(
         updatedAt: sql`CURRENT_TIMESTAMP`
       })
       .where(eq(schema.debts.id, existing.id));
-  } else if (deltaOwedToUs > 0 || deltaWeOwe > 0) {
-    await db.insert(schema.debts).values({
+  }
+
+  if (deltaOwedToUs > 0 || deltaWeOwe > 0) {
+    return db.insert(schema.debts).values({
       userId,
       contactName: contact,
       totalOwedToUs: Math.max(0, deltaOwedToUs),
       totalWeOwe: Math.max(0, deltaWeOwe)
     });
+  }
+
+  return null;
+}
+
+/**
+ * Standalone debt adjuster (wraps getDebtAdjustmentStatement).
+ */
+export async function adjustDebt(
+  db: ReturnType<typeof getDb>,
+  userId: number,
+  contactName: string,
+  deltaOwedToUs: number,
+  deltaWeOwe: number
+) {
+  const stmt = await getDebtAdjustmentStatement(db, userId, contactName, deltaOwedToUs, deltaWeOwe);
+  if (stmt) {
+    await stmt;
   }
 }

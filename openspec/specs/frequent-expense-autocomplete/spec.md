@@ -35,3 +35,10 @@ Antarmuka Chat Drawer SHALL menampilkan deretan tombol chip interaktif di atas i
 #### Scenario: Menyembunyikan atau menampilkan baris saran
 - **WHEN** pengguna menekan tombol toggle atau tombol tutup kecil `[×]` pada baris saran
 - **THEN** baris chip saran disembunyikan untuk memberikan ruang tampilan riwayat chat yang lebih luas, dan status preferensi disimpan di sesi antarmuka
+
+### Requirement: Indexed Frequent Expense Query
+Sistem SHALL menyediakan saran autocomplete transaksi berulang berbasis query terindeks pada tabel transaksi dengan waktu eksekusi di bawah 100ms.
+
+#### Scenario: Fetching frequent expense items
+- **WHEN** pengguna memanggil endpoint `GET /api/transactions/frequent`
+- **THEN** sistem mengembalikan daftar transaksi yang paling sering dicatat oleh pengguna tersebut

@@ -15,6 +15,32 @@ export type PaymentMethodType =
   | 'ShopeePay'
   | 'Transfer';
 
+/**
+ * Strict Integer Monetary Currency Validator (Zero-Decimal IDR)
+ */
+export function isValidMonetaryInteger(val: unknown): val is number {
+  return (
+    typeof val === 'number' &&
+    Number.isInteger(val) &&
+    val > 0 &&
+    Number.isFinite(val) &&
+    val <= Number.MAX_SAFE_INTEGER
+  );
+}
+
+export function toMonetaryInteger(val: unknown): number {
+  if (typeof val === 'number') {
+    const rounded = Math.round(val);
+    return isValidMonetaryInteger(rounded) ? rounded : 0;
+  }
+  if (typeof val === 'string') {
+    const clean = val.replace(/[^0-9]/g, '');
+    const parsed = Number.parseInt(clean, 10);
+    return isValidMonetaryInteger(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
 export function detectPaymentMethod(
   text: string,
   defaultMethod: PaymentMethodType = 'Cash'
@@ -152,7 +178,7 @@ export function parseBankNotificationRegex(
 
   const cleanDigits = amountMatch[1].replace(/[.,]/g, '');
   const amount = Number.parseInt(cleanDigits, 10);
-  if (!amount || Number.isNaN(amount) || amount <= 0) {
+  if (!isValidMonetaryInteger(amount)) {
     return null;
   }
 
@@ -273,13 +299,15 @@ Kembalikan JSON dengan struktur:
       referenceId?: string | null;
     };
 
-    if (!parsed.amount || parsed.amount <= 0) return regexResult;
+    if (!parsed.amount) return regexResult;
+    const integerAmount = toMonetaryInteger(parsed.amount);
+    if (!isValidMonetaryInteger(integerAmount)) return regexResult;
 
     await incrementAiUsage(db, userId, modelName);
 
     return {
       merchant: parsed.merchant || 'Pembayaran QRIS',
-      amount: Math.round(parsed.amount),
+      amount: integerAmount,
       category: parsed.category || 'Jajan',
       paymentMethod: parsed.paymentMethod || 'QRIS',
       referenceId: parsed.referenceId || null,

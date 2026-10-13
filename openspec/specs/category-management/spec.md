@@ -38,3 +38,10 @@ Sistem SHALL menyediakan antarmuka interaktif pengelolaan kategori yang dapat di
 #### Scenario: Mengakses kelola kategori dari Modal Anggaran
 - **WHEN** pengguna membuka Modal Atur Anggaran pada kartu Kesehatan Anggaran di Dashboard
 - **THEN** sistem menyertakan tombol atau bagian untuk langsung menambah pos kategori baru sebelum menetapkan batas nominal anggaran
+
+### Requirement: Dynamic Category Persistence with Strict Tenancy
+Sistem SHALL mengisolasi seluruh kategori kustom yang dibuat pengguna di tabel `categories` dengan relasi ketat ke `user_id` pengguna aktif.
+
+#### Scenario: User creates custom category
+- **WHEN** pengguna menambahkan kategori kustom "Investasi"
+- **THEN** sistem menyimpan kategori tersebut dengan `user_id` pengguna yang bersangkutan tanpa bercampur dengan tenant lain

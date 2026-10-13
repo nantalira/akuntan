@@ -27,3 +27,10 @@ Sistem SHALL menampilkan progress bar persentase pemakaian anggaran per kategori
 #### Scenario: Overbudget usage
 - **WHEN** pengeluaran kategori mencapai atau melebihi 100% dari limit anggaran
 - **THEN** bar ditampilkan dengan warna merah dengan label "OVERBUDGET"
+
+### Requirement: Atomic Budget Deduction with Integer Currency
+Sistem SHALL mengomputasi konsumsi batas anggaran bulanan per kategori menggunakan integer moneter Rupiah murni dan memutasi pagu anggaran secara atomik via `db.batch([...])`.
+
+#### Scenario: Transaction creation updates budget consumption
+- **WHEN** transaksi pengeluaran baru berhasil dicatat pada kategori tertentu
+- **THEN** akumulasi pengeluaran kategori terhitung akurat tanpa floating-point error

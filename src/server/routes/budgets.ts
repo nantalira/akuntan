@@ -10,12 +10,12 @@ const updateBudgetsSchema = z.object({
     .array(
       z.object({
         category: z.string().min(1),
-        monthlyLimit: z.number().nonnegative()
+        monthlyLimit: z.number().int('Limit anggaran harus integer Rupiah murni').nonnegative()
       })
     )
     .optional(),
   category: z.string().optional(),
-  monthlyLimit: z.number().nonnegative().optional()
+  monthlyLimit: z.number().int('Limit anggaran harus integer Rupiah murni').nonnegative().optional()
 });
 
 export const budgetsRoute = new Hono<AppEnv>()
@@ -37,10 +37,10 @@ export const budgetsRoute = new Hono<AppEnv>()
     const userId = c.get('userId');
     const body = c.req.valid('json');
 
-    // Handle array batch update
+    // Handle array atomic batch update
     if (body.budgets && Array.isArray(body.budgets)) {
-      for (const item of body.budgets) {
-        await db
+      const stmts = body.budgets.map((item) =>
+        db
           .insert(schema.budgets)
           .values({
             userId,
@@ -50,7 +50,10 @@ export const budgetsRoute = new Hono<AppEnv>()
           .onConflictDoUpdate({
             target: [schema.budgets.userId, schema.budgets.category],
             set: { monthlyLimit: item.monthlyLimit }
-          });
+          })
+      );
+      if (stmts.length > 0) {
+        await db.batch(stmts);
       }
       return c.json({ success: true, message: 'Anggaran berhasil diperbarui' });
     }

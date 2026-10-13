@@ -60,3 +60,9 @@ Sistem SHALL menjadikan kartu ringkasan "Piutang" dan "Hutang Kita" pada Dashboa
 - **WHEN** pengguna mengklik kartu "Hutang Kita" pada Dashboard
 - **THEN** sistem membuka Bottom Drawer berisi daftar seluruh item transaksi hutang dari semua kontak yang belum lunas
 
+### Requirement: Atomic Talangan Reconciliation Batch
+Sistem SHALL merekonsiliasi saldo agregat hutang-piutang kontak secara otomatis dan atomik saat transaksi yang memiliki talangan dibuat, diubah, atau dihapus.
+
+#### Scenario: Editing talangan transaction recalculates debt
+- **WHEN** pengguna mengubah nominal talangan pada transaksi yang sudah ada
+- **THEN** saldo total piutang kontak terkait dihitung ulang dan disimpan dalam satu batch mutasi

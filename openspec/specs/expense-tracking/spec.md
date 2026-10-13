@@ -94,4 +94,16 @@ Sistem SHALL menyediakan kemampuan pemuatan data transaksi berkelanjutan (*infin
 - **WHEN** pengguna mengubah filter bulan, tanggal, kategori, atau kata kunci pencarian
 - **THEN** sistem mereset offset pagination kembali ke 0, mengosongkan daftar sebelumnya, dan memuat batch awal untuk filter baru tersebut
 
+### Requirement: Stateless Timezone Ingestion
+Sistem SHALL membaca header `X-User-Timezone` (fallback: `Asia/Jakarta`) pada seluruh input percakapan bebas pengguna di AI chat drawer agar ekstraksi tanggal dan jam lokal dikonversi secara akurat ke format ISO UTC di database D1.
 
+#### Scenario: Transaction with custom timezone header
+- **WHEN** pengguna mengirim pesan "tadi sore makan 20k" dengan header `X-User-Timezone: Asia/Makassar`
+- **THEN** sistem mengonversi jam transaksi sesuai timezone WITA ke format standar UTC
+
+### Requirement: Multi-Table Atomic Batching
+Sistem SHALL membungkus mutasi transaksi yang melibatkan perhutangan atau penyesuaian plafon anggaran ke dalam Drizzle `db.batch([...])` untuk menjamin atomisitas SQLite edge tanpa race condition.
+
+#### Scenario: Creating transaction with debt debtor
+- **WHEN** transaksi dicatat dengan talangan untuk pihak lain
+- **THEN** baris transaksi dan agregat hutang kontak diperbarui dalam satu batch SQL atomik

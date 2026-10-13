@@ -8,7 +8,7 @@ import { adjustDebt } from '../utils/debtHelper';
 
 const settleDebtSchema = z.object({
   contactName: z.string().min(1, 'Nama kontak harus diisi'),
-  amount: z.number().nonnegative().optional(),
+  amount: z.number().int('Nominal harus integer Rupiah murni').nonnegative().optional(),
   target: z.enum(['we_owe', 'owed_to_us'])
 });
 

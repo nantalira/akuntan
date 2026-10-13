@@ -6,7 +6,9 @@ import { getDb, schema } from '../../db/client';
 import type { AppEnv } from '../index';
 import { getAiQuotaStatus, incrementAiUsage, resolveUserGeminiConfig } from '../utils/aiUsage';
 import { getUserActiveCategories } from '../utils/categories';
-import { detectPaymentMethod } from '../utils/paymentParser';
+import { getDebtAdjustmentStatement } from '../utils/debtHelper';
+import { detectPaymentMethod, toMonetaryInteger } from '../utils/paymentParser';
+import { getCurrentDateAndTimeInTimezone, resolveUserTimezone } from '../utils/timezone';
 
 interface GeminiParsedResponse {
   action: 'expense' | 'settlement' | 'split_bill' | 'general';
@@ -35,14 +37,9 @@ export const chatRoute = new Hono<AppEnv>().post(
     const userId = c.get('userId');
     const { message } = c.req.valid('json');
 
-    // Current WIB (UTC+7) time reference
-    const now = new Date();
-    // Offset for UTC+7
-    const utcTime = now.getTime() + now.getTimezoneOffset() * 60000;
-    const wibDate = new Date(utcTime + 7 * 3600000);
-
-    const todayStr = wibDate.toISOString().split('T')[0]; // YYYY-MM-DD
-    const currentTimeStr = wibDate.toTimeString().split(' ')[0]; // HH:mm:ss
+    // Stateless user timezone from header (fallback: Asia/Jakarta)
+    const userTimezone = resolveUserTimezone(c.req.header('X-User-Timezone'));
+    const { date: todayStr, time: currentTimeStr } = getCurrentDateAndTimeInTimezone(userTimezone);
 
     const userCats = await getUserActiveCategories(db, userId);
     const catNames = userCats.map((c) => c.name);
@@ -199,78 +196,57 @@ Kembalikan format JSON:
     }
 
     const detectedMethod = parsed.payment_method || detectPaymentMethod(message, 'Cash');
+    const integerAmount = toMonetaryInteger(parsed.amount);
+    const integerDebtAmount = parsed.debt_amount ? toMonetaryInteger(parsed.debt_amount) : 0;
 
-    // Insert transaction
-    const inserted = await db
+    // Insert transaction statement
+    const insertTxStmt = db
       .insert(schema.transactions)
       .values({
         userId,
         name: parsed.name,
-        amount: Math.round(parsed.amount),
+        amount: integerAmount,
         date: parsed.date || todayStr,
         time: parsed.time || currentTimeStr,
         category: parsed.category || 'Jajan',
         debtor: parsed.debtor?.trim().toUpperCase() || null,
         creditor: parsed.creditor?.trim().toUpperCase() || null,
-        debtAmount: parsed.debt_amount ? Math.round(parsed.debt_amount) : 0,
+        debtAmount: integerDebtAmount,
         notes: parsed.notes || null,
         paymentMethod: detectedMethod,
         source: inputSource
       })
       .returning();
 
-    console.log(
-      `[TRANSACTION_LOGGER] User:${userId} | ID: ${inserted[0].id} | Nama: "${inserted[0].name}" | Rp${inserted[0].amount} | Kategori: ${inserted[0].category} | Sumber: ${inputSource.toUpperCase()}`
-    );
-
-    // Update debts (scoped per userId)
-    if (parsed.debtor && parsed.debt_amount) {
-      const contact = parsed.debtor.trim().toUpperCase();
-      const existing = await db
-        .select()
-        .from(schema.debts)
-        .where(and(eq(schema.debts.userId, userId), eq(schema.debts.contactName, contact)))
-        .get();
-      if (existing) {
-        await db
-          .update(schema.debts)
-          .set({
-            totalOwedToUs: existing.totalOwedToUs + parsed.debt_amount,
-            updatedAt: sql`CURRENT_TIMESTAMP`
-          })
-          .where(eq(schema.debts.id, existing.id));
-      } else {
-        await db.insert(schema.debts).values({
-          userId,
-          contactName: contact,
-          totalOwedToUs: parsed.debt_amount,
-          totalWeOwe: 0
-        });
-      }
-    } else if (parsed.creditor && parsed.debt_amount) {
-      const contact = parsed.creditor.trim().toUpperCase();
-      const existing = await db
-        .select()
-        .from(schema.debts)
-        .where(and(eq(schema.debts.userId, userId), eq(schema.debts.contactName, contact)))
-        .get();
-      if (existing) {
-        await db
-          .update(schema.debts)
-          .set({
-            totalWeOwe: existing.totalWeOwe + parsed.debt_amount,
-            updatedAt: sql`CURRENT_TIMESTAMP`
-          })
-          .where(eq(schema.debts.id, existing.id));
-      } else {
-        await db.insert(schema.debts).values({
-          userId,
-          contactName: contact,
-          totalOwedToUs: 0,
-          totalWeOwe: parsed.debt_amount
-        });
-      }
+    // Prepare atomic debt adjustment if needed
+    let debtStmt = null;
+    if (parsed.debtor && integerDebtAmount > 0) {
+      debtStmt = await getDebtAdjustmentStatement(db, userId, parsed.debtor, integerDebtAmount, 0);
+    } else if (parsed.creditor && integerDebtAmount > 0) {
+      debtStmt = await getDebtAdjustmentStatement(
+        db,
+        userId,
+        parsed.creditor,
+        0,
+        integerDebtAmount
+      );
     }
+
+    let insertedRow: schema.Transaction;
+    if (debtStmt) {
+      const batchResults = (await db.batch([insertTxStmt, debtStmt])) as [
+        schema.Transaction[],
+        unknown
+      ];
+      insertedRow = batchResults[0][0];
+    } else {
+      const rows = await insertTxStmt;
+      insertedRow = rows[0];
+    }
+
+    console.log(
+      `[TRANSACTION_LOGGER] User:${userId} | ID: ${insertedRow.id} | Nama: "${insertedRow.name}" | Rp${insertedRow.amount} | Kategori: ${insertedRow.category} | Sumber: ${inputSource.toUpperCase()}`
+    );
 
     return c.json({
       success: true,

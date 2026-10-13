@@ -36,11 +36,12 @@ You operate in two strictly separated phases:
 - **Single-Domain Lifecycle Workflow:**
   - Do NOT create or wait for `[CODE-XX]` micro-tickets. Pull a Domain Ticket (e.g. `ANT-21`) ONLY when marked `locked` and instructed by the user.
   - **Strict WIP = 1:** NEVER pull more than one domain ticket into `In Progress` at any given time.
+  - **Attach `coder` Label on Execution:** When starting `/opsx-apply`, attach the Kaneo `coder` Kanban label (`#F59E0B`) to the active domain ticket to signal that implementation is actively underway by the Coder.
   - Use the local `/openspec/.../tasks.md` file as your primary micro-task checklist.
   - Run `openspec apply` ONLY for the active domain currently in progress. Running multi-domain batch apply is strictly prohibited.
   - Implement TypeScript code, migrations, and automated tests in focused <= 90-minute atomic blocks.
 - **Mandatory User Confirmation:** Before modifying, creating, or deleting any project code or migration files, you MUST explain the intended changes, list affected files, and await explicit user confirmation.
-- **Zero Autonomous Kaneo Mutations:** During local coding and testing (`/opsx-apply`), you are STRICTLY FORBIDDEN from modifying Kaneo task statuses or posting comments autonomously. All Kaneo mutations must wait for the user to invoke `/kaneo-sync` or give explicit instruction.
+- **Restricted Kaneo Mutations During Coding:** During local coding and testing (`/opsx-apply`), task status transitions and commentary are STRICTLY FORBIDDEN until `/kaneo-sync`. Only the initial `coder` label attachment is permitted upon pulling/starting the task.
 - **Zero Destructive / Unconfirmed Git Operations:** You are STRICTLY FORBIDDEN from executing `git commit`, `git push`, or destructive Git commands (`git reset --hard`, `git checkout --`, `git restore`, `git clean`, `git stash drop`) on your own initiative. All Git mutations require explicit user instruction or confirmation.
 - **Zero Deletion of Runtime Files:** You are STRICTLY FORBIDDEN from deleting any files under `src/`, `drizzle/`, `test/`, or project root configuration files (`wrangler.jsonc`, `package.json`, `tsconfig.json`, etc.). File deletion is strictly restricted to temporary proposal change folders inside `openspec/changes/` during formal `/opsx-archive`.
 - **Strict Local-Only Cloudflare Execution:** All Wrangler commands, D1 migrations, and runtime tests must STRICTLY target local environments (`--local`). You are STRICTLY FORBIDDEN from executing commands with `--remote` flags or touching live production Cloudflare data.
@@ -113,6 +114,7 @@ Do NOT automatically push status updates or post comments to Kaneo immediately a
    - Delta specs are synced to main specs in `openspec/specs/`.
    - A permanent walkthrough record is generated at `openspec/changes/walkthrough/<change-id>-walkthrough.md` (flagged with `kaneo_sync: pending`).
    - The active change directory (`openspec/changes/<change-id>/`) is cleanly deleted.
+   - All domain changes (runtime code, migrations, tests, synced specs, and walkthrough report) are automatically staged (`git add ...`) into Git Staged Changes (`Changes to be committed`), excluding other untracked proposal change folders. This leaves the changes staged and ready for the user's manual review and commit.
 3. **Kaneo Synchronization (`/kaneo-sync`):**
    - The user calls `/kaneo-sync` to trigger synchronization.
    - The Kaneo sync skill scans `openspec/changes/walkthrough/` for pending walkthrough records.
