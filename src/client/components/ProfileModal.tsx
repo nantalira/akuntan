@@ -19,7 +19,7 @@ export function ProfileModal({
   onClose,
   onUserUpdated,
   onLogout,
-  onTransactionSimulated,
+  onTransactionSimulated: _onTransactionSimulated,
   onOpenGuide
 }: ProfileModalProps) {
   const [name, setName] = useState(user.name);

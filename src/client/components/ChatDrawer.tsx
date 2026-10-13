@@ -360,7 +360,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
             sender: 'bot',
             text: data.reply,
             isSuccess: data.recorded,
-            transaction: data.transaction
+            transaction: 'transaction' in data ? (data.transaction as TransactionItem) : undefined
           }
         ]);
         if (data.recorded) {
@@ -368,12 +368,14 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ onTransactionAdded }) =>
           fetchFrequentItems();
         }
       } else {
+        const errorMsg =
+          typeof data.error === 'string' ? data.error : 'Maaf, gagal memproses catatan.';
         setMessages((prev) => [
           ...prev,
           {
             id: (Date.now() + 1).toString(),
             sender: 'bot',
-            text: data.error || 'Maaf, gagal memproses catatan.'
+            text: errorMsg
           }
         ]);
       }

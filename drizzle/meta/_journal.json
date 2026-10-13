@@ -50,6 +50,13 @@
       "when": 1791518713764,
       "tag": "0006_premium_zemo",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1791796187358,
+      "tag": "0007_faithful_sleepwalker",
+      "breakpoints": true
     }
   ]
 }

@@ -28,7 +28,9 @@ export const transactions = sqliteTable(
   'transactions',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    userId: integer('user_id').default(1).notNull(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     amount: integer('amount').notNull(),
     date: text('date').notNull(), // YYYY-MM-DD
@@ -48,7 +50,9 @@ export const transactions = sqliteTable(
   (table) => ({
     userIdIdx: index('idx_transactions_user_id').on(table.userId),
     dateIdx: index('idx_transactions_date').on(table.date),
-    categoryIdx: index('idx_transactions_category').on(table.category)
+    categoryIdx: index('idx_transactions_category').on(table.category),
+    userDateIdx: index('idx_transactions_user_date').on(table.userId, table.date),
+    userIdCompositeIdx: index('idx_transactions_user_id_composite').on(table.userId, table.id)
   })
 );
 
@@ -56,7 +60,9 @@ export const debts = sqliteTable(
   'debts',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    userId: integer('user_id').default(1).notNull(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
     contactName: text('contact_name').notNull(),
     totalOwedToUs: integer('total_owed_to_us').default(0).notNull(), // Piutang (Terhutangi)
     totalWeOwe: integer('total_we_owe').default(0).notNull(), // Hutang (Menghutangi)
@@ -71,7 +77,9 @@ export const budgets = sqliteTable(
   'budgets',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    userId: integer('user_id').default(1).notNull(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
     category: text('category').notNull(),
     monthlyLimit: integer('monthly_limit').notNull().default(0)
   },
@@ -84,7 +92,9 @@ export const aiUsage = sqliteTable(
   'ai_usage',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    userId: integer('user_id').default(1).notNull(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
     date: text('date').notNull(), // YYYY-MM-DD
     requestCount: integer('request_count').notNull().default(0),
     modelUsed: text('model_used').notNull(),
@@ -101,7 +111,7 @@ export const categories = sqliteTable(
     id: integer('id').primaryKey({ autoIncrement: true }),
     userId: integer('user_id')
       .notNull()
-      .references(() => users.id),
+      .references(() => users.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     emoji: text('emoji').notNull().default('💰'),
     color: text('color').notNull().default('#10b981'),

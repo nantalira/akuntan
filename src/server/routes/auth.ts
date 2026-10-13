@@ -4,7 +4,7 @@ import { drizzle } from 'drizzle-orm/d1';
 import { Hono } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
 import { z } from 'zod';
-import { users } from '../../db/schema';
+import { categories, DEFAULT_CATEGORIES, users } from '../../db/schema';
 import type { AppEnv } from '../index';
 import { AUTH_COOKIE_NAME, authMiddleware } from '../middleware/auth';
 import { generateWebhookToken, hashPassword, signAuthToken, verifyPassword } from '../utils/auth';
@@ -69,6 +69,17 @@ export const authRoute = new Hono<AppEnv>()
       })
       .returning()
       .get();
+
+    // Batch seed the 6 default categories for this new user tenant
+    const defaultCategoriesToInsert = DEFAULT_CATEGORIES.map((cat, idx) => ({
+      userId: inserted.id,
+      name: cat.name,
+      emoji: cat.emoji,
+      color: cat.color,
+      sortOrder: idx + 1,
+      isActive: 1
+    }));
+    await db.insert(categories).values(defaultCategoriesToInsert);
 
     const token = await signAuthToken(
       { sub: inserted.id, email: inserted.email, name: inserted.name },

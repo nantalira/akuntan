@@ -11,10 +11,12 @@
     "preview": "wrangler pages dev dist",
     "lint": "biome lint .",
     "format": "biome format --write .",
-    "check": "biome check --write .",
+    "check": "tsc --noEmit && biome check .",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
-    "db:migrate:remote": "wrangler d1 migrations apply DB --remote"
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@hono/zod-validator": "^0.9.1",
@@ -32,6 +34,7 @@
     "@biomejs/biome": "2.5.14",
     "@cloudflare/workers-types": "^4.20250214.0",
     "@hono/vite-dev-server": "^0.18.2",
+    "@types/node": "^26.6.5",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",

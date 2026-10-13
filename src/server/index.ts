@@ -45,6 +45,14 @@ app.use(
   })
 );
 
+// Enforce SQLite Foreign Keys per D1 request connection
+app.use('/api/*', async (c, next) => {
+  if (c.env?.DB) {
+    await c.env.DB.exec('PRAGMA foreign_keys = ON;');
+  }
+  await next();
+});
+
 // Public endpoints
 app.get('/api/health', (c) => {
   return c.json({ status: 'ok', time: new Date().toISOString() });

@@ -8,6 +8,7 @@ export interface AiQuotaData {
   remaining: number;
   model: string;
   status: 'safe' | 'warning' | 'exceeded';
+  isCustomKey?: boolean;
 }
 
 export function useAiQuota() {
@@ -29,7 +30,8 @@ export function useAiQuota() {
             limit: data.limit,
             remaining: data.remaining,
             model: data.model,
-            status: data.status
+            status: data.status,
+            isCustomKey: data.isCustomKey
           });
         }
       } else {

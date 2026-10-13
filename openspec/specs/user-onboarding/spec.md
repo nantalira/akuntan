@@ -45,3 +45,15 @@ The system SHALL provide clear visual step-by-step instructions for installing t
 #### Scenario: User inspects PWA and QRIS sharing instructions
 - **WHEN** user selects the QRIS / PWA section from the Onboarding Launchpad or Feature Guide Modal
 - **THEN** system SHALL display step-by-step guidance illustrating: 1) Add to Home Screen, 2) Complete payment in m-Banking, 3) Tap Share receipt, and 4) Select Akuntan AI from the OS share sheet
+
+### Requirement: Atomic Tenant Default Category Provisioning
+Saat pengguna baru berhasil menyelesaikan registrasi akun, sistem SHALL secara atomik menginisialisasi 6 kategori bawaan (Makan, Jajan, Primer, Transport, Olga, Belanja) pada tabel `categories` yang terikat langsung ke `user_id` milik pengguna baru tersebut, sehingga pengguna dapat langsung melakukan pencatatan transaksi tanpa konfigurasi kategori manual.
+
+#### Scenario: New user registration seeds personal default categories
+- **WHEN** pengguna baru sukses terdaftar melalui `POST /api/auth/register`
+- **THEN** sistem mengeksekusi batch insert 6 kategori standar yang masing-masing memiliki `user_id` pengguna baru tersebut
+- **THEN** pengguna langsung memiliki daftar kategori aktif saat pertama kali membuka AI Chat Drawer atau modal pencatatan
+
+#### Scenario: Transaction isolation of seeded categories
+- **WHEN** Pengguna baru mengubah warna atau nama kategori default miliknya
+- **THEN** perubahan tersebut hanya berdampak pada baris kategori miliknya dan tidak memengaruhi kategori default milik pengguna lain

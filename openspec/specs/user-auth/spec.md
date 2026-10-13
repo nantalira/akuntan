@@ -29,11 +29,19 @@ Sistem SHALL memverifikasi kredensial pengguna pada `POST /api/auth/login` mengg
 - **THEN** sistem mengembalikan status `401 Unauthorized` dengan pesan error kredensial tidak valid
 
 ### Requirement: Protected API Middleware
-Seluruh endpoint `/api/*` (kecuali `/api/health`, `/api/auth/login`, `/api/auth/register`, dan endpoint webhook eksternal `/api/webhooks/qris/:token`) SHALL dilindungi oleh middleware autentikasi Hono yang memvalidasi JWT dari Cookie atau header `Authorization: Bearer <token>`.
+Seluruh endpoint `/api/*` (kecuali `/api/health`, `/api/auth/login`, `/api/auth/register`, `/api/share-target`, dan endpoint webhook eksternal `/api/webhooks/qris/:token`) SHALL dilindungi oleh middleware autentikasi Hono yang memvalidasi JWT dari HttpOnly Cookie `akuntan_session` atau header `Authorization: Bearer <token>`, serta menyuntikkan `userId`, `userEmail`, dan `userName` ke context request Hono.
 
 #### Scenario: Unauthenticated request to protected endpoint
 - **WHEN** klien memanggil endpoint terproteksi seperti `GET /api/transactions` tanpa sesi JWT yang valid
 - **THEN** server menolak request dengan status `401 Unauthorized` dan frontend menampilkan layar Login/Register
+
+#### Scenario: Valid authenticated request extracts tenant context
+- **WHEN** klien mengirimkan request dengan cookie atau bearer token JWT yang valid
+- **THEN** middleware memverifikasi tanda tangan JWT, mengekstrak subject token ke variabel context `userId`, dan meneruskan request ke handler berikutnya
+
+#### Scenario: Forged or expired JWT token rejection
+- **WHEN** klien mengirimkan token JWT yang telah kadaluarsa atau diubah tanpa secret yang valid
+- **THEN** middleware menolak request dengan status `401 Unauthorized` dan menghapus cookie sesi yang tidak valid
 
 ### Requirement: User Profile BYOK Gemini API Key and Personal Webhook Token
 Sistem SHALL memungkinkan pengguna yang sudah login untuk memperbarui `gemini_api_key` pribadi mereka (BYOK) melalui `PUT /api/auth/profile` dan me-regenerate `webhook_token` pribadi mereka melalui `POST /api/auth/webhook-token/regenerate`.
@@ -52,3 +60,14 @@ Tabel `users` SHALL dirancang untuk menyimpan data otorisasi Google OAuth per-pe
 #### Scenario: Deferred Google OAuth columns migration
 - **WHEN** pengembang menjalankan migrasi saat ini
 - **THEN** perubahan tabel `users` untuk Google OAuth ditunda ke fase rilis OAuth berikutnya
+
+### Requirement: Edge Native PBKDF2 Password Security
+Sistem SHALL menggunakan implementasi Web Crypto API bawaan Cloudflare Workers untuk melakukan password hashing menggunakan algoritma PBKDF2 (SHA-256, 100.000 iterasi, 16-byte random salt, 256-bit derived key) tanpa ketergantungan library eksternal Node.js.
+
+#### Scenario: Registering password produces secure edge hash
+- **WHEN** pengguna mendaftarkan akun baru dengan password tertentu
+- **THEN** sistem menghasilkan hash berformat `pbkdf2:100000:<saltHex>:<hashHex>` yang disimpan pada kolom `users.password_hash`
+
+#### Scenario: Validating password executes constant-time comparison
+- **WHEN** pengguna melakukan login dengan kata sandi
+- **THEN** sistem melakukan verifikasi turunan hash menggunakan perbandingan konstan untuk mencegah kerentanan timing attack

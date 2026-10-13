@@ -70,7 +70,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   data,
   selectedMonth,
   onMonthChange,
-  isLoading,
+  isLoading: _isLoading,
   budgets = {},
   onSaveBudgets = async () => {},
   onNavigateToDebts,
