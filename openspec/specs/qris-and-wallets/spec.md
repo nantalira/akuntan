@@ -26,3 +26,11 @@ Sistem SHALL memproses data struk QRIS yang masuk dan mencegah duplikasi pencata
 #### Scenario: Valid new QRIS receipt received
 - **WHEN** webhook menerima payload email struk QRIS baru yang valid
 - **THEN** sistem mencatat pengeluaran ke database D1 dengan metode pembayaran `QRIS` dan nominal serta merchant yang sesuai
+
+### Requirement: Payment Method Metadata Classification
+Sistem SHALL mengklasifikasikan metode pembayaran dari payload webhook secara deterministik.
+
+#### Scenario: Payment source tagged correctly
+- **WHEN** payload webhook menunjukkan pembayaran dari GoPay
+- **THEN** transaksi disimpan dengan `payment_method = 'GoPay'`
+

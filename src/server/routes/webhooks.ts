@@ -4,6 +4,13 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb, schema } from '../../db/client';
 import type { AppEnv } from '../index';
+import {
+  computeSha512Hex,
+  enqueueOutboxItem,
+  processSyncOutbox,
+  timingSafeEqualString,
+  verifyWebhookSignature
+} from '../utils/outbox';
 import { parseQrisNotificationSmart } from '../utils/paymentParser';
 
 const webhookQrisSchema = z.object({
@@ -30,10 +37,8 @@ function getJakartaDateTime(customIso?: string) {
   };
 }
 
-export const webhooksRoute = new Hono<AppEnv>().post(
-  '/qris/:token',
-  zValidator('json', webhookQrisSchema),
-  async (c) => {
+export const webhooksRoute = new Hono<AppEnv>()
+  .post('/qris/:token', zValidator('json', webhookQrisSchema), async (c) => {
     const token = c.req.param('token')?.trim() || c.req.header('X-Webhook-Token')?.trim() || '';
 
     if (!token) {
@@ -145,6 +150,25 @@ export const webhooksRoute = new Hono<AppEnv>().post(
       .returning()
       .get();
 
+    // Enqueue outbox item for asynchronous Google Sheets sync (non-blocking)
+    await enqueueOutboxItem(db, {
+      userId: user.id,
+      target: 'google_sheets',
+      payload: {
+        transactionId: created.id,
+        date: created.date,
+        time: created.time,
+        name: created.name,
+        amount: created.amount,
+        category: created.category,
+        paymentMethod: created.paymentMethod
+      }
+    });
+
+    if (c.executionCtx?.waitUntil) {
+      c.executionCtx.waitUntil(processSyncOutbox(c.env));
+    }
+
     return c.json(
       {
         success: true,
@@ -154,5 +178,151 @@ export const webhooksRoute = new Hono<AppEnv>().post(
       },
       201
     );
-  }
-);
+  })
+  .post('/midtrans', async (c) => {
+    // Invariant: Webhook verification MUST read raw body before JSON parsing
+    const rawBody = await c.req.text();
+    if (!rawBody) {
+      return c.json({ success: false, error: 'Empty payload' }, 400);
+    }
+
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(rawBody);
+    } catch {
+      return c.json({ success: false, error: 'Invalid JSON payload' }, 400);
+    }
+
+    const serverKey = c.env.MIDTRANS_SERVER_KEY || c.env.WEBHOOK_SECRET || 'test_server_key';
+    const orderId = String(payload.order_id || payload.orderId || '');
+    const statusCode = String(payload.status_code || payload.statusCode || '');
+    const grossAmount = String(payload.gross_amount || payload.grossAmount || '');
+    const signatureKey = String(
+      payload.signature_key || payload.signatureKey || c.req.header('X-Signature') || ''
+    );
+
+    // Invariant: Timing-safe cryptographic verification
+    let isValid = false;
+    if (c.req.header('X-Signature-SHA256') || c.req.header('X-Signature')) {
+      const hmacSig = c.req.header('X-Signature-SHA256') || c.req.header('X-Signature') || '';
+      isValid = await verifyWebhookSignature({
+        rawBody,
+        signature: hmacSig,
+        secretKey: serverKey,
+        algorithm: 'hmac-sha256'
+      });
+    } else if (signatureKey && orderId && statusCode && grossAmount) {
+      const expectedHash = await computeSha512Hex(
+        `${orderId}${statusCode}${grossAmount}${serverKey}`
+      );
+      isValid = timingSafeEqualString(signatureKey.toLowerCase(), expectedHash.toLowerCase());
+    } else if (signatureKey) {
+      isValid = await verifyWebhookSignature({
+        rawBody,
+        signature: signatureKey,
+        secretKey: serverKey,
+        algorithm: 'hmac-sha256'
+      });
+    }
+
+    if (!isValid) {
+      return c.json({ success: false, error: 'Invalid webhook signature' }, 401);
+    }
+
+    const db = getDb(c.env.DB);
+    const transactionId = String(payload.transaction_id || orderId);
+
+    // Invariant: Idempotency checking via ID transaksi in D1 before mutating billing
+    const existingTx = await db
+      .select()
+      .from(schema.transactions)
+      .where(eq(schema.transactions.referenceId, transactionId))
+      .get();
+
+    if (existingTx) {
+      return c.json({
+        success: true,
+        deduplicated: true,
+        message: 'Transaction already processed',
+        data: existingTx
+      });
+    }
+
+    const transactionStatus = String(payload.transaction_status || 'settlement');
+    const fraudStatus = String(payload.fraud_status || 'accept');
+
+    // Deterministic payment method mapping
+    const paymentType = String(payload.payment_type || '').toLowerCase();
+    let paymentMethod = 'QRIS';
+    if (paymentType.includes('gopay')) {
+      paymentMethod = 'GoPay';
+    } else if (paymentType.includes('shopeepay')) {
+      paymentMethod = 'ShopeePay';
+    } else if (paymentType.includes('bank_transfer') || paymentType.includes('echannel')) {
+      paymentMethod = 'Transfer';
+    } else if (paymentType.includes('cstore')) {
+      paymentMethod = 'Indomaret/Alfamart';
+    }
+
+    const amount = Math.round(Number.parseFloat(grossAmount || '0'));
+    const { date, time } = getJakartaDateTime(payload.transaction_time as string | undefined);
+
+    // Determine user to credit (default to first active user or specified custom field)
+    const customUserId = Number(payload.custom_field1);
+    let targetUserId = Number.isInteger(customUserId) && customUserId > 0 ? customUserId : 0;
+    if (!targetUserId) {
+      const firstUser = await db.select({ id: schema.users.id }).from(schema.users).limit(1).get();
+      targetUserId = firstUser?.id || 1;
+    }
+
+    let created = null;
+    const isPaid =
+      (transactionStatus === 'settlement' || transactionStatus === 'capture') &&
+      fraudStatus === 'accept';
+
+    if (isPaid && amount > 0) {
+      created = await db
+        .insert(schema.transactions)
+        .values({
+          userId: targetUserId,
+          name: `Pembayaran ${orderId}`,
+          amount,
+          date,
+          time,
+          category: 'Primer',
+          paymentMethod,
+          referenceId: transactionId,
+          notes: `Midtrans payment ${orderId} (${paymentType})`,
+          source: 'qris_webhook'
+        })
+        .returning()
+        .get();
+
+      // Enqueue outbox item for async notification and cloud sheet sync
+      await enqueueOutboxItem(db, {
+        userId: targetUserId,
+        target: 'midtrans',
+        payload: {
+          orderId,
+          transactionId,
+          amount,
+          paymentMethod,
+          transactionStatus
+        }
+      });
+
+      if (c.executionCtx?.waitUntil) {
+        c.executionCtx.waitUntil(processSyncOutbox(c.env));
+      }
+    }
+
+    return c.json(
+      {
+        success: true,
+        deduplicated: false,
+        status: transactionStatus,
+        transaction: created
+      },
+      200
+    );
+  });

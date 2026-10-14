@@ -53,3 +53,11 @@ Antarmuka `ProfileModal` SHALL menyediakan alamat endpoint webhook unik dan toke
 #### Scenario: User accesses QRIS guide and webhook credentials in ProfileModal
 - **WHEN** pengguna membuka modal Pengaturan Profil
 - **THEN** sistem menampilkan webhook URL, token, tombol salin, dan panduan langkah penggunaan fitur Bagikan ke Akuntan AI via PWA Web Share Target
+
+### Requirement: Timing-Safe Webhook Cryptographic Verification
+Sistem SHALL memverifikasi signature webhook pembayaran (HMAC-SHA256) menggunakan representasi raw payload dan timingSafeEqual sebelum memproses mutasi transaksi.
+
+#### Scenario: Valid webhook signature processed idempotently
+- **WHEN** penyedia pembayaran mengirimkan notifikasi transaksi dengan signature valid
+- **THEN** sistem memverifikasi signature secara timing-safe, mencatat event ke tabel `sync_outbox`, dan merespons HTTP 200
+

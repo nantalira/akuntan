@@ -1,5 +1,6 @@
 import { zValidator } from '@hono/zod-validator';
 import { eq } from 'drizzle-orm';
+import type { BatchItem } from 'drizzle-orm/batch';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb, schema } from '../../db/client';
@@ -53,7 +54,7 @@ export const budgetsRoute = new Hono<AppEnv>()
           })
       );
       if (stmts.length > 0) {
-        await db.batch(stmts);
+        await db.batch(stmts as unknown as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
       }
       return c.json({ success: true, message: 'Anggaran berhasil diperbarui' });
     }

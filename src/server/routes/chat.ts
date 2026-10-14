@@ -1,5 +1,6 @@
 import { zValidator } from '@hono/zod-validator';
 import { and, eq, sql } from 'drizzle-orm';
+import type { BatchItem } from 'drizzle-orm/batch';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb, schema } from '../../db/client';
@@ -227,10 +228,10 @@ Kembalikan format JSON:
 
     let insertedRow: schema.Transaction;
     if (debtStmt) {
-      const batchResults = (await db.batch([insertTxStmt, debtStmt])) as [
-        schema.Transaction[],
-        unknown
-      ];
+      const batchResults = (await db.batch([insertTxStmt, debtStmt] as unknown as [
+        BatchItem<'sqlite'>,
+        BatchItem<'sqlite'>
+      ])) as unknown as [schema.Transaction[], unknown];
       insertedRow = batchResults[0][0];
     } else {
       const rows = await insertTxStmt;
@@ -244,7 +245,7 @@ Kembalikan format JSON:
     return c.json({
       success: true,
       recorded: true,
-      transaction: inserted[0],
+      transaction: insertedRow,
       reply:
         parsed.reply ||
         `Berhasil dicatat: ${parsed.name} Rp ${parsed.amount.toLocaleString('id-ID')} (${parsed.category})`

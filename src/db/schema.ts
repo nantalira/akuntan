@@ -127,6 +127,27 @@ export const categories = sqliteTable(
   })
 );
 
+export const syncOutbox = sqliteTable(
+  'sync_outbox',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    target: text('target').notNull(),
+    payload: text('payload').notNull(),
+    status: text('status').default('pending').notNull(),
+    attempts: integer('attempts').default(0).notNull(),
+    lastError: text('last_error'),
+    createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`).notNull()
+  },
+  (table) => ({
+    statusIdx: index('idx_sync_outbox_status').on(table.status),
+    userStatusIdx: index('idx_sync_outbox_user_status').on(table.userId, table.status)
+  })
+);
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Transaction = typeof transactions.$inferSelect;
@@ -137,3 +158,5 @@ export type AiUsage = typeof aiUsage.$inferSelect;
 export type NewAiUsage = typeof aiUsage.$inferInsert;
 export type CategoryItem = typeof categories.$inferSelect;
 export type NewCategoryItem = typeof categories.$inferInsert;
+export type SyncOutboxItem = typeof syncOutbox.$inferSelect;
+export type NewSyncOutboxItem = typeof syncOutbox.$inferInsert;

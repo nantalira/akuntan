@@ -33,3 +33,11 @@ Sistem SHALL mencatat spesifikasi alur Google OAuth 2.0 resmi (`GET /api/auth/go
 #### Scenario: Google OAuth implementation status
 - **WHEN** pengembang meninjau cakupan integrasi email
 - **THEN** alur Google OAuth ditandai sebagai fitur tertunda (pending) dan menjadi satu-satunya jalur integrasi email resmi yang direncanakan di masa depan
+
+### Requirement: Encrypted OAuth Token Storage Invariant
+Token refresh Google OAuth pengguna SHALL disimpan secara terenkripsi pada environment storage D1.
+
+#### Scenario: Background token refresh
+- **WHEN** access token Google telah kadaluarsa saat sinkronisasi outbox berjalan
+- **THEN** sistem memperbarui access token menggunakan refresh token secara otomatis
+

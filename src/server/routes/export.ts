@@ -6,7 +6,8 @@ import { getDb, schema } from '../../db/client';
 import type { AppEnv } from '../index';
 
 const exportQuerySchema = z.object({
-  month: z.string().optional()
+  month: z.string().optional(),
+  format: z.enum(['csv', 'json']).optional().default('csv')
 });
 
 export const exportRoute = new Hono<AppEnv>().get(
@@ -15,7 +16,7 @@ export const exportRoute = new Hono<AppEnv>().get(
   async (c) => {
     const db = getDb(c.env.DB);
     const userId = c.get('userId');
-    const { month } = c.req.valid('query'); // e.g. '2026-09' or undefined
+    const { month, format } = c.req.valid('query'); // e.g. '2026-09' or undefined
 
     const conditions = [eq(schema.transactions.userId, userId)];
     if (month && /^\d{4}-\d{2}$/.test(month)) {
@@ -28,6 +29,15 @@ export const exportRoute = new Hono<AppEnv>().get(
       .where(and(...conditions))
       .orderBy(asc(schema.transactions.date), asc(schema.transactions.time))
       .all();
+
+    if (format === 'json') {
+      const filename = month ? `akuntan-transaksi-${month}.json` : 'akuntan-transaksi-semua.json';
+      return c.json(rows, 200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Cache-Control': 'no-cache'
+      });
+    }
 
     const escapeCsv = (val: string | number | null | undefined): string => {
       if (val === null || val === undefined) return '""';

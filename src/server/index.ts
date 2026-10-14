@@ -14,6 +14,7 @@ import { scanReceiptRoute } from './routes/scanReceipt';
 import { transactionsRoute } from './routes/transactions';
 import { transcribeRoute } from './routes/transcribe';
 import { webhooksRoute } from './routes/webhooks';
+import { processSyncOutbox } from './utils/outbox';
 
 export type Bindings = {
   DB: D1Database;
@@ -25,6 +26,8 @@ export type Bindings = {
   ASSETS?: Fetcher;
   RECEIPTS_BUCKET?: R2Bucket;
   AI?: Ai;
+  MIDTRANS_SERVER_KEY?: string;
+  WEBHOOK_SECRET?: string;
 };
 
 export type Variables = {
@@ -306,4 +309,15 @@ app.all('*', (c) => {
 });
 
 export type AppType = typeof apiRoutes;
-export default app;
+export { app };
+
+export default {
+  fetch: app.fetch,
+  request: app.request.bind(app),
+  async scheduled(event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) {
+    console.log(
+      `[SCHEDULED_CRON] Triggered cron ${event.cron} at ${new Date(event.scheduledTime).toISOString()}`
+    );
+    ctx.waitUntil(processSyncOutbox(env));
+  }
+};

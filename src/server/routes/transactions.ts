@@ -1,5 +1,6 @@
 import { zValidator } from '@hono/zod-validator';
 import { and, desc, eq, like, sql } from 'drizzle-orm';
+import type { BatchItem } from 'drizzle-orm/batch';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb, schema } from '../../db/client';
@@ -200,10 +201,10 @@ export const transactionsRoute = new Hono<AppEnv>()
 
     let insertedRow: schema.Transaction;
     if (debtStmt) {
-      const batchResults = (await db.batch([insertTxStmt, debtStmt])) as [
-        schema.Transaction[],
-        unknown
-      ];
+      const batchResults = (await db.batch([insertTxStmt, debtStmt] as unknown as [
+        BatchItem<'sqlite'>,
+        BatchItem<'sqlite'>
+      ])) as unknown as [schema.Transaction[], unknown];
       insertedRow = batchResults[0][0];
     } else {
       const rows = await insertTxStmt;
@@ -314,10 +315,10 @@ export const transactionsRoute = new Hono<AppEnv>()
 
       let updatedRow: schema.Transaction;
       if (debtStmts.length > 0) {
-        const batchResults = (await db.batch([updateTxStmt, ...debtStmts])) as [
-          schema.Transaction[],
-          ...unknown[]
-        ];
+        const batchResults = (await db.batch([updateTxStmt, ...debtStmts] as unknown as [
+          BatchItem<'sqlite'>,
+          ...BatchItem<'sqlite'>[]
+        ])) as unknown as [schema.Transaction[], ...unknown[]];
         updatedRow = batchResults[0][0];
       } else {
         const rows = await updateTxStmt;
@@ -372,7 +373,10 @@ export const transactionsRoute = new Hono<AppEnv>()
       .where(and(eq(schema.transactions.id, id), eq(schema.transactions.userId, userId)));
 
     if (debtStmts.length > 0) {
-      await db.batch([deleteTxStmt, ...debtStmts]);
+      await db.batch([deleteTxStmt, ...debtStmts] as unknown as [
+        BatchItem<'sqlite'>,
+        ...BatchItem<'sqlite'>[]
+      ]);
     } else {
       await deleteTxStmt;
     }

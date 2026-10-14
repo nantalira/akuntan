@@ -30,6 +30,9 @@
   "vars": {
     "GEMINI_MODEL": "gemini-3.5-flash-lite"
   },
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1

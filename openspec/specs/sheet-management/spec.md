@@ -25,3 +25,11 @@ Sistem SHALL menyediakan kemampuan migrasi data satu-klik untuk mengimpor seluru
 #### Scenario: Import data 23 tab Google Sheets
 - **WHEN** skrip migrasi data dijalankan dengan tautan Google Sheets
 - **THEN** sistem mengonversi seluruh transaksi dari tab Juli 2024 hingga September 2026 ke dalam skema D1 dan mencatatnya tanpa kehilangan data
+
+### Requirement: Non-Blocking Google Sheets Outbox Sync
+Sistem SHALL menyinkronkan transaksi ke Google Sheets secara asinkron melalui antrean `sync_outbox` tanpa menghambat alur interaksi pengguna di aplikasi.
+
+#### Scenario: Outbox cron processes pending sheet rows
+- **WHEN** scheduled cron trigger berjalan setiap 5 menit
+- **THEN** sistem mengambil antrean status `pending`, mengirimkannya ke Google Sheets API, dan menandai status menjadi `completed`
+
