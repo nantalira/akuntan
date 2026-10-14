@@ -48,3 +48,14 @@ Antarmuka pengguna SHALL menerapkan jeda pendinginan (*cooldown debounce*) pada 
 #### Scenario: Rapid repeated submission
 - **WHEN** pengguna menekan tombol kirim atau mikrofon secara beruntun dalam waktu kurang dari 1.5 detik
 - **THEN** sistem menonaktifkan tombol sementara dan mencegah request ganda agar tidak melanggar batas RPM (Requests Per Minute)
+
+### Requirement: Synchronous Atomic Quota Enforcement in D1
+Sistem SHALL memverifikasi dan memotong sisa kuota AI pengguna secara atomik di Cloudflare D1 menggunakan query SQL tunggal sebelum meneruskan request ke model AI.
+
+#### Scenario: User within quota proceeds to AI pipeline
+- **WHEN** pengguna dengan kuota tersisa melakukan request OCR atau transkripsi suara
+- **THEN** sistem memotong 1 kuota secara atomik di D1 dan mengeksekusi inferensi AI
+
+#### Scenario: User quota exhausted returns clean 429 payload
+- **WHEN** kuota bulanan pengguna telah habis
+- **THEN** sistem menolak request dengan status `429 Too Many Requests` tanpa memanggil API LLM eksternal

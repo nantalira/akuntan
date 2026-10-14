@@ -1,10 +1,12 @@
+import { Buffer } from 'node:buffer';
 import { zValidator } from '@hono/zod-validator';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../../db/client';
 import type { AppEnv } from '../index';
-import { getAiQuotaStatus, incrementAiUsage, resolveUserGeminiConfig } from '../utils/aiUsage';
+import { consumeAiQuotaAtomic, resolveUserGeminiConfig } from '../utils/aiQuota';
 import { getUserActiveCategories } from '../utils/categories';
+import { toMonetaryInteger } from '../utils/paymentParser';
 
 export type ReceiptExtractedData = {
   merchant: string;
@@ -15,7 +17,19 @@ export type ReceiptExtractedData = {
   items: string[];
   notes: string;
   confidence: 'high' | 'medium' | 'low';
+  storageKey?: string;
 };
+
+const receiptExtractionZodSchema = z.object({
+  merchant: z.string().default('Toko/Kasir'),
+  amount: z.union([z.number(), z.string()]).transform((val) => toMonetaryInteger(val)),
+  category: z.string().default('Belanja'),
+  date: z.string().optional(),
+  time: z.string().optional(),
+  items: z.array(z.string()).default([]),
+  notes: z.string().default(''),
+  confidence: z.enum(['high', 'medium', 'low']).default('medium')
+});
 
 const scanReceiptSchema = z.object({
   imageBase64: z.string().min(1, 'Gambar struk tidak boleh kosong'),
@@ -30,7 +44,7 @@ export const scanReceiptRoute = new Hono<AppEnv>().post(
     const userId = c.get('userId');
     const modelName = c.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 
-    const { apiKey, isCustomKey } = await resolveUserGeminiConfig(db, userId, c.env.GEMINI_API_KEY);
+    const { apiKey } = await resolveUserGeminiConfig(db, userId, c.env.GEMINI_API_KEY);
 
     if (!apiKey) {
       return c.json(
@@ -42,12 +56,19 @@ export const scanReceiptRoute = new Hono<AppEnv>().post(
       );
     }
 
-    const quota = await getAiQuotaStatus(db, userId, modelName, c.env.AI_DAILY_LIMIT, isCustomKey);
-    if (quota.remaining <= 0) {
+    // 1. Enforce atomic quota check & deduction before calling external Vision API
+    const quotaResult = await consumeAiQuotaAtomic(db, userId, {
+      modelName,
+      overrideLimit: c.env.AI_DAILY_LIMIT,
+      serverApiKey: c.env.GEMINI_API_KEY
+    });
+
+    if (!quotaResult.allowed) {
       return c.json(
         {
           success: false,
           error:
+            quotaResult.message ||
             'Kuota harian AI telah habis. Silakan catat manual atau masukkan Gemini API Key pribadi di Pengaturan Profil.'
         },
         429
@@ -59,12 +80,44 @@ export const scanReceiptRoute = new Hono<AppEnv>().post(
     // Clean data URL prefix if present (e.g. data:image/png;base64,xxxx)
     const cleanBase64 = imageBase64.replace(/^data:[a-zA-Z0-9/+-]+;base64,/, '').trim();
 
+    // Invariant: Reject image payloads exceeding 4MB (HTTP 413)
+    const approxByteLength = Math.ceil((cleanBase64.length * 3) / 4);
+    if (approxByteLength > 4 * 1024 * 1024) {
+      return c.json(
+        {
+          success: false,
+          error: 'Ukuran berkas gambar melebihi batas maksimal 4MB'
+        },
+        413
+      );
+    }
+
     // Current WIB (UTC+7) reference
     const now = new Date();
     const utcTime = now.getTime() + now.getTimezoneOffset() * 60000;
     const wibDate = new Date(utcTime + 7 * 3600000);
     const todayStr = wibDate.toISOString().split('T')[0];
     const currentTimeStr = wibDate.toTimeString().split(' ')[0];
+
+    // 2. Direct Cloudflare R2 stream upload (Zero-cost binding, no AWS SDK)
+    let receiptStorageKey: string | undefined;
+    if (c.env.RECEIPTS_BUCKET) {
+      try {
+        const binaryData = Buffer.from(cleanBase64, 'base64');
+        const ext = mimeType.includes('png') ? 'png' : mimeType.includes('webp') ? 'webp' : 'jpg';
+        const storageKey = `receipts/${userId}/${todayStr}/${crypto.randomUUID()}.${ext}`;
+        await c.env.RECEIPTS_BUCKET.put(storageKey, binaryData, {
+          httpMetadata: { contentType: mimeType },
+          customMetadata: {
+            userId: String(userId),
+            uploadedAt: new Date().toISOString()
+          }
+        });
+        receiptStorageKey = storageKey;
+      } catch (r2Err) {
+        console.error('[R2 Storage] Failed to store receipt in R2:', r2Err);
+      }
+    }
 
     const userCats = await getUserActiveCategories(db, userId);
     const catNames = userCats.map((c) => c.name);
@@ -155,12 +208,8 @@ Kembalikan respon DALAM FORMAT JSON PERSIS SEPERTI INI:
         throw new Error('Gemini tidak mengembalikan teks ekstraksi');
       }
 
-      const parsed = JSON.parse(textContent) as ReceiptExtractedData;
-      try {
-        await incrementAiUsage(db, userId, modelName);
-      } catch (dbErr) {
-        console.error('Failed to increment AI usage counter in scanReceipt:', dbErr);
-      }
+      const rawParsed = JSON.parse(textContent);
+      const parsed = receiptExtractionZodSchema.parse(rawParsed);
 
       // Normalize category with user's active categories
       let safeCategory = userCats[0]?.name || 'Belanja';
@@ -172,14 +221,15 @@ Kembalikan respon DALAM FORMAT JSON PERSIS SEPERTI INI:
       }
 
       const normalizedData: ReceiptExtractedData = {
-        merchant: parsed.merchant || 'Struk Belanja',
-        amount: Math.round(Number(parsed.amount) || 0),
+        merchant: parsed.merchant,
+        amount: parsed.amount, // Enforced integer Rupiah via toMonetaryInteger
         category: safeCategory,
         date: parsed.date || todayStr,
         time: parsed.time || currentTimeStr,
-        items: Array.isArray(parsed.items) ? parsed.items : [],
-        notes: parsed.notes || (Array.isArray(parsed.items) ? parsed.items.join(', ') : ''),
-        confidence: parsed.confidence || 'medium'
+        items: parsed.items,
+        notes: parsed.notes || (parsed.items.length > 0 ? parsed.items.join(', ') : ''),
+        confidence: parsed.confidence,
+        storageKey: receiptStorageKey
       };
 
       return c.json({

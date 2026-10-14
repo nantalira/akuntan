@@ -29,3 +29,10 @@ Sistem SHALL menginisialisasi instans `SpeechRecognition` baru pada setiap inter
 #### Scenario: Microphone permission denied
 - **WHEN** peramban memblokir atau pengguna menolak izin mikrofon
 - **THEN** sistem menghentikan status rekam dan menampilkan pesan peringatan ramah bahwa izin mikrofon diperlukan
+
+### Requirement: Graceful Voice Fallback Engine
+Sistem SHALL menyediakan fallback otomatis ke formulir drawer manual apabila audio tidak jelas atau kuota transkripsi habis.
+
+#### Scenario: Audio failure gracefully opens manual drawer
+- **WHEN** rekaman audio gagal diproses oleh AI
+- **THEN** sistem membuka form manual dengan pesan pemberitahuan yang ramah

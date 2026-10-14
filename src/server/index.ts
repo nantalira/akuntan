@@ -12,6 +12,7 @@ import { debtsRoute } from './routes/debts';
 import { exportRoute } from './routes/export';
 import { scanReceiptRoute } from './routes/scanReceipt';
 import { transactionsRoute } from './routes/transactions';
+import { transcribeRoute } from './routes/transcribe';
 import { webhooksRoute } from './routes/webhooks';
 
 export type Bindings = {
@@ -22,6 +23,8 @@ export type Bindings = {
   AI_DAILY_LIMIT?: string;
   JWT_SECRET?: string;
   ASSETS?: Fetcher;
+  RECEIPTS_BUCKET?: R2Bucket;
+  AI?: Ai;
 };
 
 export type Variables = {
@@ -49,6 +52,49 @@ app.use(
 app.use('/api/*', async (c, next) => {
   if (c.env?.DB) {
     await c.env.DB.exec('PRAGMA foreign_keys = ON;');
+  }
+  await next();
+});
+
+// Gatekeeper Invariant: Reject oversized payloads (HTTP 413) before Worker memory buffering
+app.use('/api/scan-receipt/*', async (c, next) => {
+  const len = Number(c.req.header('content-length') || 0);
+  if (len > 4 * 1024 * 1024) {
+    return c.json(
+      { success: false, error: 'Ukuran berkas gambar melebihi batas maksimal 4MB' },
+      413
+    );
+  }
+  await next();
+});
+app.use('/api/scan-receipt', async (c, next) => {
+  const len = Number(c.req.header('content-length') || 0);
+  if (len > 4 * 1024 * 1024) {
+    return c.json(
+      { success: false, error: 'Ukuran berkas gambar melebihi batas maksimal 4MB' },
+      413
+    );
+  }
+  await next();
+});
+
+app.use('/api/ai/transcribe/*', async (c, next) => {
+  const len = Number(c.req.header('content-length') || 0);
+  if (len > 10 * 1024 * 1024) {
+    return c.json(
+      { success: false, error: 'Ukuran berkas audio melebihi batas maksimal 10MB' },
+      413
+    );
+  }
+  await next();
+});
+app.use('/api/ai/transcribe', async (c, next) => {
+  const len = Number(c.req.header('content-length') || 0);
+  if (len > 10 * 1024 * 1024) {
+    return c.json(
+      { success: false, error: 'Ukuran berkas audio melebihi batas maksimal 10MB' },
+      413
+    );
   }
   await next();
 });
@@ -224,6 +270,8 @@ app.use('/api/ai-quota/*', authMiddleware);
 app.use('/api/ai-quota', authMiddleware);
 app.use('/api/scan-receipt/*', authMiddleware);
 app.use('/api/scan-receipt', authMiddleware);
+app.use('/api/ai/transcribe/*', authMiddleware);
+app.use('/api/ai/transcribe', authMiddleware);
 app.use('/api/analytics/*', authMiddleware);
 app.use('/api/analytics', authMiddleware);
 app.use('/api/debts/*', authMiddleware);
@@ -242,6 +290,7 @@ const apiRoutes = app
   .route('/api/chat', chatRoute)
   .route('/api/ai-quota', aiQuotaRoute)
   .route('/api/scan-receipt', scanReceiptRoute)
+  .route('/api/ai/transcribe', transcribeRoute)
   .route('/api/analytics', analyticsRoute)
   .route('/api/debts', debtsRoute)
   .route('/api/categories', categoriesRoute)

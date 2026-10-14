@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb, schema } from '../../db/client';
 import type { AppEnv } from '../index';
-import { getAiQuotaStatus, incrementAiUsage, resolveUserGeminiConfig } from '../utils/aiUsage';
+import { consumeAiQuotaAtomic, resolveUserGeminiConfig } from '../utils/aiQuota';
 import { getUserActiveCategories } from '../utils/categories';
 import { getDebtAdjustmentStatement } from '../utils/debtHelper';
 import { detectPaymentMethod, toMonetaryInteger } from '../utils/paymentParser';
@@ -46,23 +46,21 @@ export const chatRoute = new Hono<AppEnv>().post(
     const catNamesFormatted = catNames.map((n) => `"${n}"`).join(', ');
     const catListPrompt = userCats.map((c) => `- ${c.name} (${c.emoji})`).join('\n');
 
-    const { apiKey, isCustomKey } = await resolveUserGeminiConfig(db, userId, c.env.GEMINI_API_KEY);
+    const { apiKey } = await resolveUserGeminiConfig(db, userId, c.env.GEMINI_API_KEY);
     let parsed: GeminiParsedResponse;
     let inputSource: 'ai' | 'local_parser' = 'local_parser';
 
     if (apiKey) {
       const modelName = c.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
-      const quota = await getAiQuotaStatus(
-        db,
-        userId,
+      const quotaResult = await consumeAiQuotaAtomic(db, userId, {
         modelName,
-        c.env.AI_DAILY_LIMIT,
-        isCustomKey
-      );
+        overrideLimit: c.env.AI_DAILY_LIMIT,
+        serverApiKey: c.env.GEMINI_API_KEY
+      });
 
-      if (quota.remaining <= 0) {
+      if (!quotaResult.allowed) {
         console.warn(
-          `AI Quota reached limit for user ${userId} (${quota.used}/${quota.limit}), falling back to local parser`
+          `AI Quota reached limit for user ${userId} (${quotaResult.used}/${quotaResult.limit}), falling back to local parser`
         );
         parsed = fallbackLocalParser(message, todayStr, currentTimeStr, userCats);
       } else {
@@ -134,11 +132,6 @@ Kembalikan format JSON:
           if (textContent) {
             parsed = JSON.parse(textContent);
             inputSource = 'ai';
-            try {
-              await incrementAiUsage(db, userId, modelName);
-            } catch (dbErr) {
-              console.error('Failed to increment AI usage counter in chat:', dbErr);
-            }
           } else {
             throw new Error('Empty Gemini response content');
           }

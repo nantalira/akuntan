@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { getDb } from '../../db/client';
 import type { AppEnv } from '../index';
-import { getAiQuotaStatus, resolveUserGeminiConfig } from '../utils/aiUsage';
+import { getAiQuotaStatus, resolveUserGeminiConfig } from '../utils/aiQuota';
 
 export const aiQuotaRoute = new Hono<AppEnv>().get('/', async (c) => {
   const db = getDb(c.env.DB);

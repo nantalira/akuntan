@@ -26,3 +26,10 @@ Sistem SHALL menampilkan formulir konfirmasi hasil pembacaan struk kepada penggu
 #### Scenario: User confirms extracted receipt
 - **WHEN** data ekstraksi struk ditampilkan di layar dan pengguna menekan tombol "Simpan Transaksi"
 - **THEN** transaksi berhasil dicatat ke database D1 dan grafik dashboard otomatis ter-update
+
+### Requirement: Direct R2 Receipt Ingestion
+Sistem SHALL menerima gambar struk belanja dan menyimpannya secara streaming langsung ke Cloudflare R2 bucket tanpa mem-buffer seluruh file di memori Workers di atas 128MB.
+
+#### Scenario: Successful receipt vision extraction
+- **WHEN** pengguna mengunggah foto struk belanja yang jelas
+- **THEN** sistem menyimpan berkas di R2, mengirimkannya ke Gemini Flash Vision, dan mengembalikan data terstruktur

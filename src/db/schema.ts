@@ -21,6 +21,8 @@ export const users = sqliteTable('users', {
   avatarUrl: text('avatar_url'),
   geminiApiKey: text('gemini_api_key'),
   webhookToken: text('webhook_token').notNull().unique(),
+  aiQuotaUsed: integer('ai_quota_used').default(0).notNull(),
+  aiQuotaLimit: integer('ai_quota_limit').default(20).notNull(),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull()
 });
 

@@ -26,3 +26,10 @@ Sistem SHALL memberikan notifikasi yang ramah jika browser pengguna tidak menduk
 #### Scenario: Browser does not support speech recognition
 - **WHEN** pengguna membuka aplikasi di peramban yang tidak memiliki Web Speech API
 - **THEN** tombol mikrofon disembunyikan atau dinonaktifkan dengan tooltip informatif
+
+### Requirement: Workers AI Whisper Voice Transcription
+Sistem SHALL mentranskripsikan input audio suara menggunakan Cloudflare Workers AI bawaan (`@cf/openai/whisper`) dan meneruskan teks transkripsi ke pipeline pencatatan natural language.
+
+#### Scenario: Valid voice input parsed to transaction
+- **WHEN** pengguna berbicara melalui input mikrofon
+- **THEN** sistem mentranskripsikan audio ke teks dan mengisi draf transaksi di chat drawer

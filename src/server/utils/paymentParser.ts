@@ -34,7 +34,21 @@ export function toMonetaryInteger(val: unknown): number {
     return isValidMonetaryInteger(rounded) ? rounded : 0;
   }
   if (typeof val === 'string') {
-    const clean = val.replace(/[^0-9]/g, '');
+    let str = val.trim();
+    // Handle standard float string format e.g. "125000.49" or "47500.5"
+    if (/^\d+\.\d+$/.test(str)) {
+      const parsedFloat = Number.parseFloat(str);
+      const rounded = Math.round(parsedFloat);
+      return isValidMonetaryInteger(rounded) ? rounded : 0;
+    }
+    // Handle Indonesian cents e.g. "Rp 47.500,00" or "47.500,50"
+    if (/,\d{1,2}$/.test(str)) {
+      str = str.replace(/,\d{1,2}$/, '');
+    } else if (/\.\d{2}$/.test(str) && str.includes(',')) {
+      // e.g. "47,500.00"
+      str = str.replace(/\.\d{2}$/, '');
+    }
+    const clean = str.replace(/[^0-9]/g, '');
     const parsed = Number.parseInt(clean, 10);
     return isValidMonetaryInteger(parsed) ? parsed : 0;
   }
